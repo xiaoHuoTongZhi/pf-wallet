@@ -234,6 +234,15 @@ Settings → Branches → *Add branch protection rule*（或 Rulesets → New ru
 
 ### 1.5 首次运行的建议顺序
 
+> **不需要 `gh`。** 三份 workflow 的触发条件里都有 `push: branches [main]`，
+> 所以**首次推送本身就会同时拉起三个关卡**，`gh workflow run` 只是
+> 「补跑某一个」时的便捷入口，不是必经步骤。
+> 本机没装 `gh`（`where gh` 无结果）时，用网页手动触发：
+> 仓库页 → **Actions** → 左侧选中 workflow → 右上 **Run workflow** → 选 `main` → Run
+> （这一项依赖 workflow 里有 `workflow_dispatch:`，本仓三份都有）。
+
+推荐顺序（手动补跑时）：
+
 ```bash
 # ① 先手动触发关卡 1（最快、最不依赖平台差异）
 gh workflow run gate1-static.yml
@@ -251,6 +260,9 @@ gh run watch
 顺序的道理：关卡 1 失败几乎总是**接线问题**（工具链、路径、版本），
 一次性排查完；关卡 2 失败几乎总是**代码或平台行为问题**，最值得单独花时间。
 两者一起跑，日志会互相淹没。
+
+M0 首推的实测结果印证了这个分层：关卡 1 一次绿、关卡 3 四个作业一次绿，
+唯一的失败落在关卡 2 的第 9 步（见 §3 P0-5）。
 
 ---
 
@@ -335,7 +347,12 @@ gh run watch
 ## 3. CI 上会出现、本机不会出现的失败 · 按可能性排序
 
 每条格式：**症状 → 定位命令 → 修复方向**。
-标 `[已修]` 的是这次已经修掉的，保留下来是因为它们随时可能以别的形式回来。
+标 `[已修]` 的是已经修掉的，保留下来是因为它们随时可能以别的形式回来。
+
+> **首次推送（`a451c04`）实际命中的只有 P0-5。** P0-1～P0-4 在推送前就已修掉，
+> 因此没在 CI 上出现过；它们的价值在于「如果哪天动了工具链版本，会以同样的面孔回来」。
+> P0-5 是唯一一个必须靠 CI 才能暴露的问题（本机沙箱跑不了 flutter_tester，
+> 那份报告在本地从来没被生成过），也就是本文存在的理由。
 
 > **本节所有「定位命令」都假设你在 Git Bash 里执行**（用到 `grep` / `awk` / `while read`）。
 > 在 cmd.exe 里会报 `'grep' 不是内部或外部命令` —— 那不是命令写错了，
@@ -454,6 +471,82 @@ echo "写进 GITHUB_PATH: $PUB_BIN"; ls -1 "$PUB_BIN_POSIX"
 两个方向的转换都不能少：bash 里 `%LOCALAPPDATA%` 是反斜杠形式，直接拼 `/Pub/Cache/bin`
 会得到一个 MSYS 判不出来的路径；而写回 `$GITHUB_PATH` 时必须是反斜杠形式，
 因为 Windows 上后续步骤默认走 pwsh。
+
+### P0-5 关卡 2 的「断言 widget 测试确实执行」在**三个平台同时**失败 `[已修 · 首次推送实际命中]`
+
+这是 M0 首推（提交 `a451c04`）**唯一**的失败：关卡 1 全绿、关卡 3 四个作业全绿，
+关卡 2 的 ubuntu 与 macOS 在第 9 步红，Windows 随后同样红。
+
+**症状**（三个平台的日志完全一致）：
+
+```
+✗ 报告不可解析：TestReportFormatException @ build/test-reports/pf_mobile.jsonl:
+  第 1 行不是合法 JSON：Unexpected character
+Process completed with exit code 2.
+```
+
+注意第 8 步「运行移动端 widget 测试（JSON 协议报告）」是**绿的** —— 测试本身跑得好好的，
+红的是第 9 步的断言，退出码 2（报告不可用），不是 1（用例失败）。
+
+**根因**：`flutter test` 默认会先做一次**隐式 `pub get`**，并把解析进度写到 **stdout**：
+
+```
+Resolving dependencies in `D:\workbuddy\pf-wallet`...
+Downloading packages...
+  analyzer 7.7.1 (14.4.0 available)
+  ...（共 35 行包版本清单）
+Got dependencies in `D:\workbuddy\pf-wallet`!
+32 packages have newer versions incompatible with dependency constraints.
+```
+
+而第 8 步用 `>` 把 stdout 重定向成报告文件 —— **写进 stdout 的东西都会进报告**。
+本机实测：前 **37 行**都是这类文本，真正的 JSON 事件从第 **38** 行才开始
+（第一行 `{"protocolVersion":"0.1.1",...}`）。于是解析器在第 1 行就停了。
+
+**这不算误报**：报告确实被污染了，`assert_test_report.dart` 的判定是对的。
+错的是产出报告的命令 —— 修在**生产端**，不是放宽解析器
+（放宽了就会连「报告被截断」一起放过，那正是这个工具要防的静默归零）。
+
+**定位命令**（本机就能完整复现，不需要等 CI）：
+
+```bash
+cd apps/pf_mobile
+
+# ① 复现：报告头部 37 行不是 JSON
+flutter test --reporter json > ../../build/test-reports/pf_mobile.jsonl
+sed -n '1,3p'  ../../build/test-reports/pf_mobile.jsonl   # Resolving dependencies ...
+grep -c '^Resolving dependencies' ../../build/test-reports/pf_mobile.jsonl   # 1
+
+# ② 用断言工具复刻 CI 的失败（退出码 2，并且现在会把坏行开头打出来）
+dart run packages/pf_testkit/bin/assert_test_report.dart \
+  --report build/test-reports/pf_mobile.jsonl --label 复刻 --min-executed 3
+
+# ③ 修法验证：加 --no-pub 后报告从第 1 行就是 JSON
+flutter test --no-pub --reporter json > ../../build/test-reports/pf_mobile.nopub.jsonl
+sed -n '1p' ../../build/test-reports/pf_mobile.nopub.jsonl   # {"protocolVersion":...
+# 逐行 JSON 校验，期望 bad=0
+python -c "
+import json
+bad=sum(1 for l in open(r'build/test-reports/pf_mobile.nopub.jsonl',encoding='utf-8') if l.strip() and not json.loads(l) or False)
+print('bad=',bad)"
+```
+
+**修复方向**：`.github/workflows/gate2-test.yml` 第 8 步的命令改成
+
+```bash
+flutter test --no-pub --reporter json > ../../build/test-reports/pf_mobile.jsonl
+```
+
+`--no-pub` 是**必需参数，不是优化**：依赖已经在上一「解析工作区依赖」步骤解析完，
+这里的隐式 `pub get` 纯属重复劳动，去掉后 stdout 只剩 JSON Lines。
+
+**同一类陷阱的其它形态**（都靠「报告第一行必须是 JSON」这条硬约束兜住）：
+`>` 写成 `>>` 导致两次运行混写、reporter 参数传成 `compact`、
+shell 的启动横幅（`.bashrc` 里 `echo`）混进 stdout。
+
+**顺带做的诊断增强**：`TestReportFormatException` 现在会带上坏行的开头（截断到 120 字符），
+`assert_test_report.dart` 在退出码 2 时会列出三条常见成因。
+这样下次同类问题在 CI 日志里就能自解释，不用再回本机复现一遍。
 
 ### P1 行尾 CRLF 让关卡 1 在 Linux 上失败
 
@@ -701,11 +794,15 @@ gh api repos/:owner/:repo/actions/permissions
   working-directory: apps/pf_mobile
   run: |
     mkdir -p ../../build/test-reports
-    flutter test --reporter json > ../../build/test-reports/pf_mobile.jsonl
+    flutter test --no-pub --reporter json > ../../build/test-reports/pf_mobile.jsonl
 ```
 
 `--reporter json` 只往 stdout 写 JSON Lines，人读的输出仍由 `melos run test:cov`
 那一步提供（compact reporter），两步互不干扰。
+
+`--no-pub` 是**必需参数**：这一步用 `>` 把 stdout 重定向成报告，
+而 `flutter test` 默认会先做一次隐式 `pub get` 并把解析进度写进 stdout ——
+那会让报告前 37 行不是 JSON。完整推导见 §3 的 P0-5（首推时就是栽在这里）。
 
 **第二层：核对报告里的三个信号**
 
@@ -768,16 +865,31 @@ dart run packages/pf_testkit/bin/assert_test_report.dart \
 dart run packages/pf_testkit/bin/assert_test_report.dart --report build/test-reports/_empty.jsonl
 echo "exit=$?（期望 2）"
 rm -f build/test-reports/_empty.jsonl
+
+# ④ 报告被工具输出污染（首推实际命中的那种）→ 退出码 2，并打出坏行开头
+{ echo 'Resolving dependencies in `...`...'; echo 'Got dependencies!'; cat build/test-reports/pf_mobile.jsonl; } \
+  > build/test-reports/_polluted.jsonl
+dart run packages/pf_testkit/bin/assert_test_report.dart --report build/test-reports/_polluted.jsonl
+echo "exit=$?（期望 2）"
+rm -f build/test-reports/_polluted.jsonl
 ```
 
 第 ③ 步很重要：**「报告没拿到」与「测试有失败」必须用不同退出码**，
 否则「CI 接线断了」会伪装成「实现有 bug」，排查方向当场被带偏。
 这与 `vector_report.dart` 的 0/1/2 约定一致。
 
+第 ④ 步是首推事故的回放：它验证的是「污染不会被误判成用例失败」——
+退出码必须是 2 而不是 1，且错误信息要指出**哪一行、长什么样**。
+
 ### 4.4 在 CI 上肉眼确认（第一次跑完必看）
 
 ```bash
-# 直接读断言那一步的日志：应当看到三条 ✓
+# 网页路径（本机没装 gh 时用这条）：
+#   https://github.com/<owner>/<repo>/actions  → 点进 gate2-test 的任一作业
+#   → 展开「断言 widget 测试确实执行（而非被跳过）」这一步
+#   → 日志里应当看到三条 ✓ 与「✓ 判定通过」
+
+# 有 gh 时可以直接读日志
 gh run view <run-id> --log | grep -A 12 "断言 widget 测试确实执行"
 
 # 把报告拉下来自己看（三条 testDone，skipped 全为 false）

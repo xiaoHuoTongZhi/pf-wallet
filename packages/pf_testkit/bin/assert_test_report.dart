@@ -123,7 +123,19 @@ int _run(List<String> argv) {
   try {
     summary = TestReportSummary.parse(content, source: p.relative(reportPath, from: repoRoot.path));
   } on TestReportFormatException catch (error) {
-    stderr.writeln('✗ 报告不可解析：$error');
+    stderr
+      ..writeln('✗ 报告不可解析：$error')
+      // 这条提示是踩过坑之后补的：报告「不可解析」最常见的成因不是报告本身坏，
+      // 而是产出报告的**命令**把别的输出混进了 stdout。
+      // 报告文件由 `> ../../build/test-reports/pf_mobile.jsonl` 重定向而来，
+      // 所以任何一行写进 stdout 的东西都会进入报告。
+      ..writeln('  常见成因（按出现频率）：')
+      ..writeln('   1. `flutter test` 没加 `--no-pub` —— 它会先把 pub 的解析进度')
+      ..writeln('      （Resolving dependencies in ... / Downloading packages... /')
+      ..writeln('      Got dependencies! ...）写进 stdout，使报告前几十行不是 JSON。')
+      ..writeln('      修法：`flutter test --no-pub --reporter json > <报告>`。')
+      ..writeln('   2. 报告被 append（>>）到了上一次运行的残留文件上，或两次运行混写。')
+      ..writeln('   3. reporter 参数写错（传了 compact / expanded 之类）。');
     return 2;
   }
 

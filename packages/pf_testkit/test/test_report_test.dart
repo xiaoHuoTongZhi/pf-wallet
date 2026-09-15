@@ -167,14 +167,30 @@ void main() {
   });
 
   group('TestReportSummary.parse · 必须硬失败的情形', () {
-    test('某一行不是合法 JSON → 指明行号', () {
+    test('某一行不是合法 JSON → 指明行号，并带上该行开头', () {
       expect(
         () => TestReportSummary.parse('{"type":"suite"}\n这不是 JSON', source: _reportPath),
+        throwsA(
+          isA<TestReportFormatException>()
+              .having((TestReportFormatException e) => e.message, 'message', contains('第 2 行'))
+              // 光说「第 2 行坏了」只解决一半问题：CI 上报告在 artifact 里，
+              // 出错时看不到内容。带上该行开头，才能一眼分辨是
+              // 「工具输出被混进了 stdout」还是「JSON 真的断了」——
+              // 这两种成因的修法完全不同（前者改命令，后者查写入）。
+              .having((TestReportFormatException e) => e.message, 'message', contains('这不是 JSON')),
+        ),
+      );
+    });
+
+    test('坏行过长时截断，并报出原长 —— 避免 CI 日志折行把关键处挤出屏幕', () {
+      final String long = 'x' * 300;
+      expect(
+        () => TestReportSummary.parse('{"type":"suite"}\n$long', source: _reportPath),
         throwsA(
           isA<TestReportFormatException>().having(
             (TestReportFormatException e) => e.message,
             'message',
-            contains('第 2 行'),
+            contains('该行共 300 字符'),
           ),
         ),
       );

@@ -118,6 +118,27 @@ jobs:
       #
       # 关于 --reporter json：它只往 stdout 写 JSON Lines，
       # 人类可读的输出仍然来自上一步（compact reporter），两步互不干扰。
+      #
+      # 关于 --no-pub —— 这个参数是**必需的**，不是优化：
+      #
+      #   这一步用 `>` 把 stdout 重定向成报告，因此**任何写进 stdout 的东西
+      #   都会进入报告**。而 `flutter test` 默认会先做一次隐式 `pub get`，
+      #   把解析进度一并写到 stdout：
+      #
+      #     Resolving dependencies in `...`...
+      #     Downloading packages...
+      #       analyzer 7.7.1 (14.4.0 available)
+      #       ...
+      #     Got dependencies in `...`!
+      #
+      #   实测这会在报告开头插入 37 行非 JSON 文本，真正的 JSON 事件
+      #   从第 38 行才开始。assert_test_report.dart 会因此在第 1 行
+      #   以「不是合法 JSON」失败（退出码 2）—— 报告确实被污染了，
+      #   它的判定没有错，错的是产出报告的命令。
+      #
+      #   依赖已经在上一「解析工作区依赖」步骤解析完毕，这里的隐式 pub get
+      #   纯属重复劳动，去掉即可。去掉之后报告从
+      #   `{"protocolVersion":...}` 开始，是一份干净的 JSON Lines。
       # ---------------------------------------------------------------------
       - name: 运行移动端 widget 测试（JSON 协议报告）
         if: always()
@@ -125,7 +146,7 @@ jobs:
         working-directory: apps/pf_mobile
         run: |
           mkdir -p ../../build/test-reports
-          flutter test --reporter json > ../../build/test-reports/pf_mobile.jsonl
+          flutter test --no-pub --reporter json > ../../build/test-reports/pf_mobile.jsonl
 
       - name: 断言 widget 测试确实执行（而非被跳过）
         if: always()

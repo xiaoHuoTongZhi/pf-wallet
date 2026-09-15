@@ -158,7 +158,19 @@ final class TestReportSummary {
       try {
         decoded = jsonDecode(line);
       } on FormatException catch (error) {
-        throw TestReportFormatException('$where 不是合法 JSON：${error.message}', source: source);
+        // 把这一行的开头也带上。这条异常在 CI 上出现时，报告文件往往在
+        // 另一个作业的日志里，看不到内容 —— 「哪一行坏了」只解决一半问题，
+        // 「那一行长什么样」才决定下一步去改哪里。
+        //
+        // 实测：`flutter test` 不带 `--no-pub` 时会把 pub 的解析进度
+        // （Resolving dependencies in ... / Downloading packages... / Got dependencies!）
+        // 一并写进 stdout，于是报告的**前 37 行**都是这种文本，
+        // 真正的 JSON 事件从第 38 行才开始。见到 "Resolving dependencies" 就该去查这个。
+        throw TestReportFormatException(
+          '$where 不是合法 JSON：${error.message}\n'
+          '  该行开头：${_excerpt(line)}',
+          source: source,
+        );
       }
       if (decoded is! Map<String, Object?>) {
         throw TestReportFormatException('$where 不是 JSON 对象', source: source);
@@ -322,6 +334,20 @@ final class _TestStart {
 
   final String name;
   final bool declaresSkip;
+}
+
+/// 取一行做错误提示用的短摘录。
+///
+/// 上限 120 字符：报告里的坏行通常是两类 —— 工具输出（很短，一眼能认出来），
+/// 或半截 JSON（开头几十字符就足以判断断在哪里）。再长的部分只会在
+/// CI 日志里折行，反而把关键信息挤出屏幕。
+String _excerpt(String line) {
+  const int limit = 120;
+  final String trimmed = line.trim();
+  if (trimmed.length <= limit) {
+    return trimmed;
+  }
+  return '${trimmed.substring(0, limit)}…（该行共 ${trimmed.length} 字符）';
 }
 
 Map<String, Object?> _requireMap(
