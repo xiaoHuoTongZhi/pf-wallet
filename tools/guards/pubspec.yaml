@@ -1,0 +1,18 @@
+name: pf_guards
+description: >-
+  PF Wallet 自定义 CI 门禁脚本：依赖黑名单、禁用 API 扫描、日志敏感信息扫描、
+  平台隐私清单校验。纯 Dart 实现，不依赖 Flutter，可在任意平台跑。
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  args: ^2.6.0
+  path: ^1.9.0
+  yaml: ^3.1.3
+
+dev_dependencies:
+  test: ^1.25.0

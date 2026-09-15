@@ -1,0 +1,168 @@
+# =============================================================================
+# 依赖黑名单规则
+# =============================================================================
+# 本文件是「隐私至上」这条产品原则的机器可执行版本。
+#
+# 判定逻辑（见 tools/guards/lib/checks/deps.dart）：
+#   1. 读取工作区根 pubspec.lock —— 这是全仓唯一解析结果，包含直接依赖与全部传递依赖。
+#   2. 令 lock 中每一个包名依次通过 deny.packages / deny.prefixes / deny.regexes。
+#      命中任一 → error（无申诉途径）。
+#   3. 命中 review.packages 的包，必须在 deps_allowlist.yaml 中有对应条目，
+#      且 reviewBy 日期未过期 → 否则 error。
+#   4. 来源审计：shipping 范围内任何 package 直接声明了 banned 之外的 source → error。
+#
+# 为什么连传递依赖也查：
+#   遥测 SDK 最常见的进入方式不是直接依赖，而是「某个 UI 组件库顺手带进来的」。
+#   只查直接依赖等于给自己留后门。
+# =============================================================================
+
+version: 1
+
+# -----------------------------------------------------------------------------
+# 作用范围
+# -----------------------------------------------------------------------------
+# shipping：最终会编译进用户设备产物的代码
+# exempt  ：仅开发者本机使用的工具，不进入产物，不受本文件约束
+scope:
+  shipping:
+    - "apps/**"
+    - "packages/**"
+  exempt:
+    - "tools/**"
+    - "test_vectors/**"
+
+# -----------------------------------------------------------------------------
+# 一级：硬拒绝（命中即失败）
+# -----------------------------------------------------------------------------
+deny:
+  packages:
+    # --- 分析 / 遥测 ---
+    - amplitude_flutter
+    - datadog_flutter_plugin
+    - mixpanel_flutter
+    - newrelic_mobile
+    - posthog_flutter
+    - segment_analytics
+    - sentry_flutter
+    - bugsnag_flutter
+    # --- 广告 / 归因 / 变现 ---
+    - adjust_sdk
+    - appsflyer_sdk
+    - app_tracking_transparency
+    - branch_flutter
+    - facebook_app_events
+    - google_mobile_ads
+    - in_app_purchase
+    - in_app_purchase_android
+    - in_app_purchase_storekit
+    - onesignal_flutter
+    # --- 账号 / 身份 / 云后端（违反「不做账号体系、不做后端」）---
+    - cloud_firestore
+    - cloud_functions
+    - firebase_analytics
+    - firebase_auth
+    - firebase_core
+    - firebase_crashlytics
+    - firebase_messaging
+    - firebase_performance
+    - firebase_remote_config
+    - firebase_storage
+    - flutter_facebook_auth
+    - google_analytics
+    - google_sign_in
+    - googleapis
+    - googleapis_auth
+    # --- 国内推送 / 统计 ---
+    - getuiflut
+    - jpush_flutter
+    - umeng_common_sdk
+    # --- 联网状态探针：本项目不需要，且会暴露设备环境 ---
+    - connectivity_plus
+
+  prefixes:
+    - adjust_
+    - amplitude_
+    - analytics_
+    - appsflyer_
+    - branch_
+    - bugsnag_
+    - crashlytics_
+    - datadog_
+    - facebook_
+    - firebase_
+    - getui_
+    - google_
+    - jpush_
+    - mixpanel_
+    - newrelic_
+    - onesignal_
+    - posthog_
+    - segment_
+    - sentry_
+    - telemetry_
+    - tracking_
+    - umeng_
+
+  regexes:
+    - ".*_(analytics|telemetry|attribution|tracking|telemetry_client)$"
+    - ".*_crash(reporting|lytics)?$"
+
+# -----------------------------------------------------------------------------
+# 二级：需登记（有能力建立连接 / 写出沙盒 / 读取设备标识 / 调起外部 App / 触碰钥匙串）
+# -----------------------------------------------------------------------------
+# 注意：这里不是「坏包」，而是「有能力做坏事的包」。
+# 每个都必须能回答三个问题：为什么需要它、数据会去哪、出问题怎么办。
+review:
+  packages:
+    - battery_plus
+    - camera
+    - chopper
+    - device_info_plus
+    - dio
+    - dio_http2_adapter
+    - drift
+    - drift_flutter
+    - file_picker
+    - file_selector
+    - flutter_contacts
+    - flutter_local_notifications
+    - flutter_secure_storage
+    - geolocator
+    - grpc
+    - grpc_web
+    - http
+    - image_picker
+    - local_auth
+    - mobile_scanner
+    - package_info_plus
+    - path_provider
+    - permission_handler
+    - retrofit
+    - share_plus
+    - shared_preferences
+    - sqlcipher_flutter_libs
+    - sqlite3
+    - sqlite3_flutter_libs
+    - sqflite
+    - sqflite_common_ffi
+    - sqflite_sqlcipher
+    - url_launcher
+    - web_socket_channel
+    - workmanager
+
+# -----------------------------------------------------------------------------
+# 来源审计：shipping 范围内的直接依赖，来源必须干净
+# -----------------------------------------------------------------------------
+sources:
+  # 禁止 git 依赖：无法做完整性校验，且会在解析期执行构建脚本
+  banned:
+    - git
+    - path
+  # hosted 来源允许的主机白名单
+  allowedHosts:
+    - pub.dev
+    - pub.flutter-io.cn
+  # 允许的 sdk 来源（Flutter/Dart 内置包）
+  allowedSdk:
+    - dart
+    - flutter

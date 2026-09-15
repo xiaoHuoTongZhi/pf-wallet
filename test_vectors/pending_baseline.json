@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "description": "允许处于 pending 的向量用例 ID。规则：只减不增。新增 pending 视为实现倒退；消除 pending 后必须同步更新本文件。M0 阶段此列表为空 —— M2 的加密向量必须由独立参考实现（argon2 CLI / OpenSSL）生成期望值，不能由本实现自证，因此它们与 M2 实现同期落地，而不是现在先摆一个空壳占位。",
+  "pending": []
+}

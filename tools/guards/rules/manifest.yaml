@@ -1,0 +1,96 @@
+# =============================================================================
+# 平台隐私清单校验规则
+# =============================================================================
+# 为什么这一条必须进 CI：
+#   Android 默认 allowBackup=true —— 系统会自动把应用私有目录备份到云端，
+#   其中就包括 SQLCipher 加密库。这等于把「离线爆破材料」主动上传，
+#   而界面上不会有任何提示。这不是加密强度问题，是架构泄漏。
+#
+# 同理 iOS 侧要确认没有出现 NSUserTrackingUsageDescription 之类的追踪声明，
+# 以及 ITSAppUsesNonExemptEncryption 的数值必须与事实一致。
+#
+# 平台目录（android/ ios/）由 `flutter create` 生成，不入库。
+# 目录不存在时本条按 missingPlatformTolerance 处理，不阻塞 M0。
+# =============================================================================
+
+version: 1
+
+# 平台目录不存在时：warning（M0 放开）→ 生成平台目录后改为 error
+missingPlatformTolerance: warning
+
+android:
+  mainManifestCandidates:
+    - "apps/*/android/app/src/main/AndroidManifest.xml"
+
+  # 主 manifest 中禁止出现的权限
+  forbidPermissions:
+    - android.permission.INTERNET
+    - android.permission.ACCESS_COARSE_LOCATION
+    - android.permission.ACCESS_FINE_LOCATION
+    - android.permission.ACCESS_NETWORK_STATE
+    - android.permission.ACCESS_WIFI_STATE
+    - android.permission.CAMERA
+    - android.permission.GET_ACCOUNTS
+    - android.permission.QUERY_ALL_PACKAGES
+    - android.permission.READ_CONTACTS
+    - android.permission.READ_EXTERNAL_STORAGE
+    - android.permission.READ_PHONE_STATE
+    - android.permission.RECORD_AUDIO
+    - android.permission.WRITE_EXTERNAL_STORAGE
+
+  # 主 manifest 中 <application> 上必须存在的属性（值必须完全相等）
+  requireApplicationAttributes:
+    - attribute: android:allowBackup
+      value: "false"
+      rationale: 关闭 Android 自动备份，阻止加密库被同步到云端
+    - attribute: android:dataExtractionRules
+      value: "@xml/data_extraction_rules"
+      rationale: Android 12+ 的云端/设备转移规则开关
+    - attribute: android:fullBackupContent
+      value: "@xml/backup_rules"
+      rationale: Android 11 及以下的自动备份规则开关
+
+  # 必须存在的资源文件（其内容由 res/xml/ 下的模板保证全排除）
+  requireFiles:
+    - "apps/*/android/app/src/main/res/xml/data_extraction_rules.xml"
+    - "apps/*/android/app/src/main/res/xml/backup_rules.xml"
+
+  # 主 manifest 中禁止出现的属性
+  forbidApplicationAttributes:
+    - attribute: android:debuggable
+      value: "true"
+      rationale: 主 manifest 出现 debuggable 意味着 release 包可被调试
+    - attribute: android:usesCleartextTraffic
+      value: "true"
+      rationale: 允许明文流量；本项目无网络需求，不应出现
+    - attribute: android:networkSecurityConfig
+      value: null
+      rationale: >-
+        不引入自定义网络安全配置。出现即意味着有人打算联网，
+        应改为单独评估而不是顺手加上。
+
+ios:
+  infoPlistCandidates:
+    - "apps/*/ios/Runner/Info.plist"
+
+  # 必须存在的键（无值要求，只要求存在）
+  requireKeys:
+    - key: ITSAppUsesNonExemptEncryption
+      valueType: boolean
+      rationale: >-
+        必须显式声明。本项目使用了非豁免加密（AES-256-GCM / Argon2id），
+        该键的值必须与事实一致；缺失会导致每次提交审核都被问询。
+    - key: NSFaceIDUsageDescription
+      valueType: string
+      rationale: 生物解锁需要此描述，缺失会在运行时崩溃
+
+  # 禁止出现的键
+  forbidKeys:
+    - key: NSUserTrackingUsageDescription
+      rationale: 追踪用户；本项目无此行为，出现即说明引入了追踪 SDK
+    - key: NSContactsUsageDescription
+      rationale: 记账应用不需要通讯录
+    - key: NSLocationWhenInUseUsageDescription
+      rationale: 记账应用不需要定位
+    - key: NSPhotoLibraryUsageDescription
+      rationale: 仅在支持附件（M3）后再评估，M0/M1/M2 不应出现

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pf-wallet.invalid/schema/vector.schema.json",
+  "title": "PF Wallet 黄金测试向量文件",
+  "description": "test_vectors/v1/ 下每个 .json 文件的结构。Dart 侧的权威实现是 packages/pf_testkit/lib/src/vector.dart —— 两者语义必须一致，不一致时以 Dart 侧为准并修本文件。",
+  "type": "object",
+  "required": ["schemaVersion", "suite", "title", "cases"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "格式版本。读到不认识的值必须立刻拒绝，而不是尽力解析。"
+    },
+    "suite": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "套件名，约定等于不含后缀的文件名。"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "人类可读标题，出现在报告里。"
+    },
+    "description": {
+      "type": "string",
+      "description": "这个套件守的是什么、为什么这样守。"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "description": "用例数组。空数组是格式错误 —— 一个没有用例的向量文件只会让人误以为覆盖到了。",
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": ["id", "kind", "title", "milestone", "input", "expect"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-zA-Z0-9]*(\\.[a-z][a-zA-Z0-9-]*)+$",
+          "description": "全局唯一用例标识，命名约定 <领域>.<对象>.<行为>[.<变体>]。失败报告、基线文件、代码注释都用它指认，因此必须唯一且稳定 —— 已被引用的 ID 不应改名。"
+        },
+        "kind": {
+          "type": "string",
+          "description": "驱动标识。必须能在 VectorRegistry 中查到，否则整条用例记为 fail（而不是跳过）。"
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "milestone": {
+          "type": "string",
+          "pattern": "^M\\d{1,2}$",
+          "description": "该用例属于哪个里程碑。是排期概念，故意不做成枚举。"
+        },
+        "input": {
+          "type": "object",
+          "description": "驱动定义的输入字段集合。必须完全确定 —— 不含随机数、不含当前时钟、不读环境。所有不确定源都要作为字段显式传入。"
+        },
+        "expect": { "$ref": "#/$defs/expect" },
+        "notes": {
+          "type": "string",
+          "description": "为什么是这条向量。只写「测试参数校验」的注释在半年后等于没写；应当写清「不做这件事会出什么事故」。"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "description": "主题标签，用于按主题筛选。建议值：security / boundary / convergence / format / crypto / cross-platform / cross-currency / ux / forward-compat。"
+        }
+      }
+    },
+    "expect": {
+      "description": "期望结果的两种互斥形态。刻意不支持第三种：能同时接受成功与失败的期望，等于没有期望。",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["ok", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "ok": { "type": "boolean", "const": true },
+            "value": {
+              "type": "object",
+              "minProperties": 1,
+              "description": "成功形态的期望值。**不得为空对象** —— 比对规则是「期望里写到的每个键都必须一致」，空对象会让这条向量无论实现输出什么都通过，是典型的假绿灯。若某项期望值暂时无法确定（例如需要独立参考实现生成），就不要把这条用例写进文件。"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["ok", "errorCode"],
+          "additionalProperties": false,
+          "properties": {
+            "ok": { "type": "boolean", "const": false },
+            "errorCode": {
+              "type": "string",
+              "minLength": 1,
+              "description": "期望抛出的 PfError.code。写 \"*\" 表示接受任意错误码，只应出现在「错误码本身不是契约」的场景 —— 绝大多数用例必须写明具体错误码，否则错误码的稳定性就没人守了。"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

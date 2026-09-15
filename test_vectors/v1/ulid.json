@@ -1,0 +1,241 @@
+{
+  "schemaVersion": 1,
+  "suite": "ulid",
+  "title": "ULID 编码、解析与单调性",
+  "description": "ULID 在本项目里同时是主键与版本戳，而版本戳的字典序就是合并算法的全序。因此编码规则不是格式细节，而是「多设备合并能收敛」的地基。",
+  "cases": [
+    {
+      "id": "id.ulid.encode.zero",
+      "kind": "id.ulid.encode",
+      "title": "时间戳 0 + 全零随机数",
+      "milestone": "M0",
+      "input": {
+        "milliseconds": 0,
+        "randomHex": "00000000000000000000"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ulid": "00000000000000000000000000",
+          "length": 26,
+          "valid": true
+        }
+      }
+    },
+    {
+      "id": "id.ulid.encode.one-millisecond",
+      "kind": "id.ulid.encode",
+      "title": "时间戳 1 毫秒",
+      "milestone": "M0",
+      "input": {
+        "milliseconds": 1,
+        "randomHex": "00000000000000000000"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ulid": "00000000010000000000000000",
+          "length": 26,
+          "valid": true
+        }
+      },
+      "notes": "证明 48 位时间戳落在前 10 个字符上，且进位方向是从右往左。"
+    },
+    {
+      "id": "id.ulid.encode.sample",
+      "kind": "id.ulid.encode",
+      "title": "2025-01-01T00:00:00Z + 0x000102…09",
+      "milestone": "M0",
+      "input": {
+        "milliseconds": 1735689600000,
+        "randomHex": "00010203040506070809"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ulid": "01JGFJJZ00000G40R40M30E209",
+          "length": 26,
+          "valid": true
+        }
+      },
+      "notes": "这是本项目的参考 ULID。后续任何实现（Kotlin / Swift / Rust）都必须对同一输入产出同一结果，否则跨端合并会看到两套互相不认的 ID。",
+      "tags": [
+        "cross-platform"
+      ]
+    },
+    {
+      "id": "id.ulid.encode.max",
+      "kind": "id.ulid.encode",
+      "title": "时间戳与随机数双双取上界",
+      "milestone": "M0",
+      "input": {
+        "milliseconds": 281474976710655,
+        "randomHex": "ffffffffffffffffffff"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ulid": "7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+          "length": 26,
+          "valid": true
+        }
+      },
+      "notes": "首字符取值必须 ≤ 7（只用了低 3 位）。若某天编码写错一位，首字符会变成 8..Z，而 isValid 会立刻拒绝自己刚生成的值 —— 这条向量就是这个自检的锚点。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "id.ulid.decode.sample",
+      "kind": "id.ulid.decode",
+      "title": "解析参考 ULID",
+      "milestone": "M0",
+      "input": {
+        "ulid": "01JGFJJZ00000G40R40M30E209"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "milliseconds": 1735689600000,
+          "randomHex": "00010203040506070809",
+          "timestampIso": "2025-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "id": "id.ulid.decode.max",
+      "kind": "id.ulid.decode",
+      "title": "解析上界 ULID",
+      "milestone": "M0",
+      "input": {
+        "ulid": "7ZZZZZZZZZZZZZZZZZZZZZZZZZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "milliseconds": 281474976710655,
+          "randomHex": "ffffffffffffffffffff"
+        }
+      },
+      "notes": "刻意**不比对 ISO 时间字符串**：Dart 的 DateTime.toIso8601String() 对 0..9999 之外的年份会切换到带符号的扩展格式（如 +10911-06-09…），而其它语言的标准格式化函数行为各不相同。把它写进跨端契约，等于给一个与业务无关的表示细节上锁。时间戳一律以毫秒整数传递，展示层各自格式化。",
+      "tags": [
+        "boundary",
+        "cross-platform"
+      ]
+    },
+    {
+      "id": "id.ulid.validate.valid-samples",
+      "kind": "id.ulid.validate",
+      "title": "合法 ULID",
+      "milestone": "M0",
+      "input": {
+        "value": "01JGFJJZ00000G40R40M30E209"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": true,
+          "length": 26
+        }
+      }
+    },
+    {
+      "id": "id.ulid.validate.rejects-i-l-o-u",
+      "kind": "id.ulid.validate",
+      "title": "含 I / L / O / U 的 26 字符串",
+      "milestone": "M0",
+      "input": {
+        "value": "01JGFJJZ00000G40R40M30E2OI"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": false,
+          "length": 26
+        }
+      },
+      "notes": "Crockford 字母表刻意排除了这四个字符以免人工抄写歧义。长度对、字符集不对也必须拒绝 —— 只查长度是最常见的偷懒写法。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "id.ulid.validate.rejects-first-char-over-7",
+      "kind": "id.ulid.validate",
+      "title": "首字符为 Z（时间戳溢出 48 位）",
+      "milestone": "M0",
+      "input": {
+        "value": "Z0000000000000000000000000"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": false,
+          "length": 26
+        }
+      },
+      "notes": "首字符只用低 3 位。允许 Z 等于允许一个 53 位时间戳，会让排序语义失真。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "id.ulid.validate.rejects-wrong-length",
+      "kind": "id.ulid.validate",
+      "title": "长度为 25 与 27",
+      "milestone": "M0",
+      "input": {
+        "value": "01JGFJJZ00000G40R40M30E20"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": false,
+          "length": 25
+        }
+      }
+    },
+    {
+      "id": "id.ulid.validate.rejects-lowercase-ambiguous",
+      "kind": "id.ulid.validate",
+      "title": "小写含 u",
+      "milestone": "M0",
+      "input": {
+        "value": "01jgfjjz00000g40r40m30e2u9"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": false,
+          "length": 26
+        }
+      },
+      "notes": "小写数字部分是允许的，但 i/l/o/u 无论大小写都被排除。"
+    },
+    {
+      "id": "id.ulid.monotonic.same-millisecond",
+      "kind": "id.ulid.monotonic",
+      "title": "同一毫秒内连续生成 5 个 ULID",
+      "milestone": "M0",
+      "input": {
+        "milliseconds": 1735689600000,
+        "count": 5
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "count": 5,
+          "strictlyIncreasing": true,
+          "firstUlid": "01JGFJJZ000000000000000000",
+          "lastUlid": "01JGFJJZ000000000000000004",
+          "allSameTimestampPrefix": true
+        }
+      },
+      "notes": "**这条守的是合并算法的全序前提。**驱动器用全零随机源，因此递增只能来自「随机部分 +1」这条逻辑本身 ——换成真随机源的话，序列看起来也在涨，但涨的原因是随机数恰好更大，_incrementRandom 里的 off-by-one 永远不会被发现。",
+      "tags": [
+        "security",
+        "convergence"
+      ]
+    }
+  ]
+}

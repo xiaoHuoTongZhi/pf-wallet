@@ -1,0 +1,636 @@
+{
+  "schemaVersion": 1,
+  "suite": "merge",
+  "title": "记录版本与合并裁决",
+  "description": "本项目没有后端，多设备之间靠导入导出对账。合并函数必须同时满足可交换、幂等、可结合三条性质，否则用户会看到「记录凭空复活」「A 看到的结果和 B 不同」这类无法解释的现象。本文件把几个关键裁决固定下来。",
+  "cases": [
+    {
+      "id": "merge.resolve.identical",
+      "kind": "merge.resolve",
+      "title": "两侧完全一致",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        },
+        "remote": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "side": "none",
+          "reason": "identical",
+          "needsUserReview": false,
+          "isNoop": true,
+          "winnerVersionStamp": "01JGFJJZ00040G2081040G2081",
+          "winnerContentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "winnerDeleted": false,
+          "winnerDeviceId": "01JGFJCVP0248H248H248H248H"
+        }
+      },
+      "notes": "**幂等性的锚点。**「把同一份备份导入两次」在用户重试时真的会发生，若这条路径不是 no-op，重复导入就会改变数据。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "merge.resolve.remote-newer",
+      "kind": "merge.resolve",
+      "title": "导入方版本更新（相隔 1 秒）",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        },
+        "remote": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZZ8081040G2081040G2",
+          "deviceId": "01JGFJCVP148H248H248H248H2",
+          "contentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "side": "remote",
+          "reason": "newer_stamp",
+          "needsUserReview": false,
+          "isNoop": false,
+          "winnerVersionStamp": "01JGFJJZZ8081040G2081040G2",
+          "winnerContentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "winnerDeleted": false,
+          "winnerDeviceId": "01JGFJCVP148H248H248H248H2"
+        }
+      }
+    },
+    {
+      "id": "merge.resolve.local-newer",
+      "kind": "merge.resolve",
+      "title": "本地版本更新（可交换性）",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZZ8081040G2081040G2",
+          "deviceId": "01JGFJCVP148H248H248H248H2",
+          "contentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "deleted": false
+        },
+        "remote": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "side": "local",
+          "reason": "newer_stamp",
+          "needsUserReview": false,
+          "isNoop": false,
+          "winnerVersionStamp": "01JGFJJZZ8081040G2081040G2",
+          "winnerContentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "winnerDeleted": false,
+          "winnerDeviceId": "01JGFJCVP148H248H248H248H2"
+        }
+      },
+      "notes": "与上一条构成可交换性证明：同一对输入换位后，胜者必须完全相同（都是 STAMP_2）。实现里用 `>=` 而不是 `compareTo` 的话，这一对会给出两个不同的答案。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "merge.resolve.metadata-only-different-stamp",
+      "kind": "merge.resolve",
+      "title": "内容相同、仅版本戳不同",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        },
+        "remote": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZZ8081040G2081040G2",
+          "deviceId": "01JGFJCVP148H248H248H248H2",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "side": "remote",
+          "reason": "metadata_only",
+          "needsUserReview": false,
+          "isNoop": false,
+          "winnerVersionStamp": "01JGFJJZZ8081040G2081040G2",
+          "winnerContentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "winnerDeleted": false,
+          "winnerDeviceId": "01JGFJCVP148H248H248H248H2"
+        }
+      },
+      "notes": "另一台设备只是重写了同样的内容。取较大戳但不打扰用户 —— 没有 contentHash 这个字段的话，任何元数据差异都会变成一次冲突提示，而冲突提示多了以后用户就会开始无脑点「确定」，真正的冲突反而被淹没。",
+      "tags": [
+        "ux",
+        "convergence"
+      ]
+    },
+    {
+      "id": "merge.resolve.same-millisecond-cross-device",
+      "kind": "merge.resolve",
+      "title": "跨设备同毫秒写入",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ001850M2GA1850M2GA",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        },
+        "remote": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ001C5GP2RB1C5GP2RB",
+          "deviceId": "01JGFJCVP148H248H248H248H2",
+          "contentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "side": "remote",
+          "reason": "newer_stamp",
+          "needsUserReview": true,
+          "isNoop": false,
+          "winnerVersionStamp": "01JGFJJZ001C5GP2RB1C5GP2RB",
+          "winnerContentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "winnerDeleted": false,
+          "winnerDeviceId": "01JGFJCVP148H248H248H248H2"
+        }
+      },
+      "notes": "两个戳落在同一毫秒内，说明两台设备几乎同时改了同一条记录。此时「谁更新」没有语义上的强弱之分，只是被全序安排了一个结果，因此必须标记 needsUserReview。**注意这里依然是确定性的** —— 本项目不做「暂停等用户选择」，因为后者在多设备离线场景下无法收敛：用户在这台选了 A，那台选了 B，下次同步又冲突。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "merge.resolve.stamp-collision-different-content",
+      "kind": "merge.resolve",
+      "title": "版本戳相同但内容不同",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        },
+        "remote": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "side": "local",
+          "reason": "stamp_collision",
+          "needsUserReview": true,
+          "isNoop": false,
+          "winnerVersionStamp": "01JGFJJZ00040G2081040G2081",
+          "winnerContentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "winnerDeleted": false,
+          "winnerDeviceId": "01JGFJCVP0248H248H248H248H"
+        }
+      },
+      "notes": "正常流程不可能产生（同设备同戳 = 同一次写入）。出现即说明版本戳生成被破坏，或数据被外部改过。这里用 contentHash 的字典序打破平局 —— 关键不是「选得对」，而是「两台设备算出同一个结果」，否则永远无法收敛。",
+      "tags": [
+        "convergence",
+        "security"
+      ]
+    },
+    {
+      "id": "merge.resolve.tombstone-newer-wins",
+      "kind": "merge.resolve",
+      "title": "较新的墓碑胜出",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        },
+        "remote": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZZ8081040G2081040G2",
+          "deviceId": "01JGFJCVP148H248H248H248H2",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": true
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "side": "remote",
+          "reason": "newer_stamp",
+          "needsUserReview": false,
+          "isNoop": false,
+          "winnerVersionStamp": "01JGFJJZZ8081040G2081040G2",
+          "winnerContentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "winnerDeleted": true,
+          "winnerDeviceId": "01JGFJCVP148H248H248H248H2"
+        }
+      },
+      "notes": "删除操作本身产生一个新的版本戳，因此墓碑天然大于被删除内容的戳。不需要为「删除」设计单独的优先级规则 —— 那是把同一个问题解两遍。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "merge.resolve.edit-after-delete-revives",
+      "kind": "merge.resolve",
+      "title": "删除之后的编辑会让记录复活",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": true
+        },
+        "remote": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZZ8081040G2081040G2",
+          "deviceId": "01JGFJCVP148H248H248H248H2",
+          "contentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "side": "remote",
+          "reason": "newer_stamp",
+          "needsUserReview": false,
+          "isNoop": false,
+          "winnerVersionStamp": "01JGFJJZZ8081040G2081040G2",
+          "winnerContentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "winnerDeleted": false,
+          "winnerDeviceId": "01JGFJCVP148H248H248H248H2"
+        }
+      },
+      "notes": "**这是一条刻意写下来的语义决策，不是 bug。**用户在 B 设备上离线编辑的**时刻晚于** A 设备上的删除，按 LWW 就该是编辑胜出。若产品后来希望「删除永远赢」，那是一次需要显式改向量、并想清「用户明确的误删怎么恢复」的决策。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "merge.resolve.rejects-id-mismatch",
+      "kind": "merge.resolve",
+      "title": "两条不同记录被放在一起比较",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        },
+        "remote": {
+          "id": "01JGFJFXB0144GJ289144GJ289",
+          "versionStamp": "01JGFJJZZ8081040G2081040G2",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFI_E_INCOMPATIBLE"
+      },
+      "notes": "把不同记录放在一起比较，说明上游的分组逻辑坏了。必须立刻暴露，而不是「选一个看起来更合理的」继续跑下去。",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "id": "merge.resolve.rejects-short-content-hash",
+      "kind": "merge.resolve",
+      "title": "内容指纹不是 64 位十六进制",
+      "milestone": "M0",
+      "input": {
+        "local": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "abc",
+          "deleted": false
+        },
+        "remote": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZZ8081040G2081040G2",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFI_E_INCOMPATIBLE"
+      },
+      "notes": "指纹长度不对说明载荷被截断或被改过。宁可拒绝整次导入，也不要「尽力合并」。",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "id": "merge.reduce.three-versions-converges",
+      "kind": "merge.reduce",
+      "title": "三个版本收敛（顺序无关）",
+      "milestone": "M0",
+      "input": {
+        "versions": [
+          {
+            "id": "01JGFJFXB00000000000000000",
+            "versionStamp": "01JGFJJZ00040G2081040G2081",
+            "deviceId": "01JGFJCVP0248H248H248H248H",
+            "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+            "deleted": false
+          },
+          {
+            "id": "01JGFJFXB00000000000000000",
+            "versionStamp": "01JGFJJZZ8081040G2081040G2",
+            "deviceId": "01JGFJCVP148H248H248H248H2",
+            "contentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+            "deleted": false
+          },
+          {
+            "id": "01JGFJFXB00000000000000000",
+            "versionStamp": "01JGFJK0YG0C1G60R30C1G60R3",
+            "deviceId": "01JGFJCVP0248H248H248H248H",
+            "contentHash": "9067a4303ee542c96bd4a7c73e81f1a43fbbebcb9a103d739d1be6603cdc6557",
+            "deleted": false
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "winnerVersionStamp": "01JGFJK0YG0C1G60R30C1G60R3",
+          "winnerContentHash": "9067a4303ee542c96bd4a7c73e81f1a43fbbebcb9a103d739d1be6603cdc6557",
+          "winnerDeleted": false,
+          "mergedCount": 3,
+          "needsUserReview": false,
+          "orderIndependent": true,
+          "reviewFlagOrderIndependent": true
+        }
+      },
+      "notes": "驱动器会把输入逆序、以及「从中间旋转」后各跑一次。这正是可结合性（收敛性）的直接测试：对任意集合反复两两合并，结果必须与顺序无关。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "merge.reduce.tombstone-among-versions",
+      "kind": "merge.reduce",
+      "title": "集合中含墓碑",
+      "milestone": "M0",
+      "input": {
+        "versions": [
+          {
+            "id": "01JGFJFXB00000000000000000",
+            "versionStamp": "01JGFJJZ00040G2081040G2081",
+            "deviceId": "01JGFJCVP0248H248H248H248H",
+            "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+            "deleted": false
+          },
+          {
+            "id": "01JGFJFXB00000000000000000",
+            "versionStamp": "01JGFJJZZ8081040G2081040G2",
+            "deviceId": "01JGFJCVP148H248H248H248H2",
+            "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+            "deleted": true
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "winnerVersionStamp": "01JGFJJZZ8081040G2081040G2",
+          "winnerContentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "winnerDeleted": true,
+          "mergedCount": 2,
+          "needsUserReview": false,
+          "orderIndependent": true,
+          "reviewFlagOrderIndependent": true
+        }
+      },
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "merge.reduce.same-millisecond-flag-survives",
+      "kind": "merge.reduce",
+      "title": "同毫秒分歧的待复核标记不会被吞掉",
+      "milestone": "M0",
+      "input": {
+        "versions": [
+          {
+            "id": "01JGFJFXB00000000000000000",
+            "versionStamp": "01JGFJJZ001850M2GA1850M2GA",
+            "deviceId": "01JGFJCVP0248H248H248H248H",
+            "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+            "deleted": false
+          },
+          {
+            "id": "01JGFJFXB00000000000000000",
+            "versionStamp": "01JGFJJZ001C5GP2RB1C5GP2RB",
+            "deviceId": "01JGFJCVP148H248H248H248H2",
+            "contentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+            "deleted": false
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "winnerVersionStamp": "01JGFJJZ001C5GP2RB1C5GP2RB",
+          "winnerContentHash": "0cbfa847619d688226855278706687a40d82dd74d8ab8ba7cef414309ebfb1d6",
+          "winnerDeleted": false,
+          "mergedCount": 2,
+          "needsUserReview": true,
+          "orderIndependent": true,
+          "reviewFlagOrderIndependent": true
+        }
+      },
+      "notes": "needsUserReview 在 reduce 里是**或**语义，必须一路带出来。常见的实现错误是「胜者覆盖一切」，于是标记只反映最后一次比较 —— 用户永远看不到最早那次真正的分歧。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "merge.version.validity.valid",
+      "kind": "merge.version.validity",
+      "title": "合法版本元数据",
+      "milestone": "M0",
+      "input": {
+        "version": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": true,
+          "isTombstone": false,
+          "updatedAtMilliseconds": 1735689600000,
+          "contentHashLength": 64
+        }
+      },
+      "notes": "updatedAt 刻意不单独存储，而是从 versionStamp 解出：两个可以互相推导的时间字段迟早会不一致。"
+    },
+    {
+      "id": "merge.version.validity.tombstone",
+      "kind": "merge.version.validity",
+      "title": "墓碑版本",
+      "milestone": "M0",
+      "input": {
+        "version": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": true
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": true,
+          "isTombstone": true,
+          "updatedAtMilliseconds": 1735689600000,
+          "contentHashLength": 64
+        }
+      }
+    },
+    {
+      "id": "merge.version.validity.invalid-id",
+      "kind": "merge.version.validity",
+      "title": "记录 ID 不是 ULID",
+      "milestone": "M0",
+      "input": {
+        "version": {
+          "id": "NOT-A-ULID-AT-ALL-00000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": false,
+          "isTombstone": false,
+          "updatedAtMilliseconds": 1735689600000,
+          "contentHashLength": 64
+        }
+      },
+      "notes": "「整体不合法」与「时间不可读」是两件事。本用例的 ID 坏了但版本戳完好，对账时仍需要读出「这条记录何时写的」来给人看。只有版本戳本身解不出来时，才不给时间（见 invalid-stamp 用例）。",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "id": "merge.version.validity.invalid-stamp",
+      "kind": "merge.version.validity",
+      "title": "版本戳不是 ULID",
+      "milestone": "M0",
+      "input": {
+        "version": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "NOT-A-ULID-AT-ALL-00000000",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "7b3d0a12fb49b07319fc69f17d940ac70c3e8741f39d6a311359ce8205375d31",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": false,
+          "isTombstone": false,
+          "updatedAtMilliseconds": null,
+          "contentHashLength": 64
+        }
+      },
+      "notes": "解不出时间就返回 null，**不许猜**（不是 0、不是当前时间）。若在这里兜底成「现在」，一条元数据损坏的记录会被静默当成刚写入的正常记录，在 LWW 里直接赢掉同组合法记录。",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "id": "merge.version.validity.invalid-content-hash",
+      "kind": "merge.version.validity",
+      "title": "内容指纹长度不对",
+      "milestone": "M0",
+      "input": {
+        "version": {
+          "id": "01JGFJFXB00000000000000000",
+          "versionStamp": "01JGFJJZ00040G2081040G2081",
+          "deviceId": "01JGFJCVP0248H248H248H248H",
+          "contentHash": "abc",
+          "deleted": false
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": false,
+          "isTombstone": false,
+          "updatedAtMilliseconds": 1735689600000,
+          "contentHashLength": 3
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+name: pf_crypto
+description: >-
+  加密层：Argon2id 参数与密钥派生契约、AES-256-GCM 契约、PFB 加密容器二进制格式、
+  密钥保险箱契约。M0 交付「格式与参数」的完整可测实现（纯字节运算，无需原生库）；
+  算法实现于 M2 接入原生库后补齐，同时以黄金向量锁定行为。
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  pf_core: ^0.1.0
+
+dev_dependencies:
+  test: ^1.25.0

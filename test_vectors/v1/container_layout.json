@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "suite": "container_layout",
+  "title": "PFB 容器区段切分",
+  "description": "文件结构为：文件头(76) → 盐 → nonce → 密文 → 标签 → 文件尾(40)，其中三个变长段的长度由文件头声明。切分必须严格 —— 文件长度要恰好等于声明长度，多一字节少一字节都是错误。",
+  "cases": [
+    {
+      "id": "container.layout.slice.valid",
+      "kind": "container.layout.slice",
+      "title": "切分完整容器文件",
+      "milestone": "M0",
+      "input": {
+        "hex": "504642310001000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f0000000000000000000000000000000011111111111111111111111111111111222222222222222222222222000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f3333333333333333333333333333333300010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd50464246"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "fileLength": 192,
+          "declaredTotalLength": 192,
+          "headerSize": 76,
+          "saltLength": 16,
+          "nonceLength": 12,
+          "ciphertextLength": 32,
+          "tagLength": 16,
+          "trailerSize": 40,
+          "declaredPlaintextLength": 32,
+          "saltSha256": "b8f12ea8c9a95d4b4641b03d9fa5a71ad30b44ed6cd4bf793bbe1a5801b986d4",
+          "nonceSha256": "9e9d24ef8da439cce787f7d1ede2c2ba0f0d9415f5a6460f505ca384404fa530",
+          "ciphertextSha256": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+          "tagSha256": "a088eff91e38dff1bbed9bacdb1522671eabab26b8ec76130efba0dbb9e67c6a",
+          "trailerDigestHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+        }
+      },
+      "notes": "逐段写入 SHA-256 而不是只比长度：区段整体错位一位时长度依然全部正确，只有内容指纹能暴露它。",
+      "tags": [
+        "format"
+      ]
+    },
+    {
+      "id": "container.layout.slice.trailing-junk",
+      "kind": "container.layout.slice",
+      "title": "文件尾部多出 4 字节",
+      "milestone": "M0",
+      "input": {
+        "hex": "504642310001000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f0000000000000000000000000000000011111111111111111111111111111111222222222222222222222222000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f3333333333333333333333333333333300010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd50464246ffffffff"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_HEADER_INVALID"
+      },
+      "notes": "多出来的字节不受摘要与认证标签保护。放行它等于给「在文件末尾夹带私货、将来某天被别的读方解释」留了口子，因此必须拒绝。",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "id": "container.layout.slice.truncated",
+      "kind": "container.layout.slice",
+      "title": "文件被截短 10 字节",
+      "milestone": "M0",
+      "input": {
+        "hex": "504642310001000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f0000000000000000000000000000000011111111111111111111111111111111222222222222222222222222000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f3333333333333333333333333333333300010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_TRUNCATED"
+      }
+    },
+    {
+      "id": "container.layout.slice.trailer-magic-broken",
+      "kind": "container.layout.slice",
+      "title": "长度正确但尾魔数损坏",
+      "milestone": "M0",
+      "input": {
+        "hex": "504642310001000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f0000000000000000000000000000000011111111111111111111111111111111222222222222222222222222000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f3333333333333333333333333333333300010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd5a5a5a5a"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_DIGEST_MISMATCH"
+      },
+      "notes": "证明解析顺序：区段切分正确之后仍会独立校验文件尾，不会因为长度对就放行。"
+    }
+  ]
+}

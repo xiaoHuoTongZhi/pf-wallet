@@ -1,0 +1,27 @@
+name: pf_mobile
+description: >-
+  PF Wallet 移动端应用（Android / iOS）。
+  M0 阶段这里只有一个可运行的骨架 —— 真正的功能在解锁流程与数据层就绪之后逐步上线。
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  pf_core: ^0.1.0
+  pf_crypto: ^0.1.0
+  pf_data: ^0.1.0
+  pf_io: ^0.1.0
+  pf_ui: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

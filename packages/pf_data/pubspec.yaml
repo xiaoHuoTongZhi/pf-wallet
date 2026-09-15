@@ -1,0 +1,18 @@
+name: pf_data
+description: >-
+  PF Wallet 数据层：SQLCipher 数据库访问契约、事务边界、schema 迁移编排。
+  M0 交付迁移编排的完整实现（纯逻辑，可离线测试）与数据库访问契约；
+  具体 DAO 与建表 SQL 于 M1 交付。
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  pf_core: ^0.1.0
+  pf_crypto: ^0.1.0
+
+dev_dependencies:
+  test: ^1.25.0

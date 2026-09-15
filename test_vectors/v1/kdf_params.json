@@ -1,0 +1,416 @@
+{
+  "schemaVersion": 1,
+  "suite": "kdf_params",
+  "title": "Argon2id 参数与安全边界",
+  "description": "Argon2id 的参数来自文件头，也就是攻击者可控输入。本文件同时锁定「取值范围」与「三套预设」，把参数决策从口头约定变成可执行的契约。",
+  "cases": [
+    {
+      "id": "kdf.params.validate.mobile-default",
+      "kind": "kdf.params.validate",
+      "title": "移动端默认参数合法",
+      "milestone": "M0",
+      "input": {
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "saltLength": 16,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": true,
+          "describe": "m=64MiB t=3 p=1",
+          "outputLength": 32,
+          "saltLength": 16
+        }
+      }
+    },
+    {
+      "id": "kdf.params.validate.desktop-default",
+      "kind": "kdf.params.validate",
+      "title": "桌面端默认参数合法",
+      "milestone": "M0",
+      "input": {
+        "m": 262144,
+        "t": 3,
+        "p": 4,
+        "saltLength": 16,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": true,
+          "describe": "m=256MiB t=3 p=4",
+          "outputLength": 32,
+          "saltLength": 16
+        }
+      }
+    },
+    {
+      "id": "kdf.params.validate.lower-bounds",
+      "kind": "kdf.params.validate",
+      "title": "全部参数取下界",
+      "milestone": "M0",
+      "input": {
+        "m": 19456,
+        "t": 2,
+        "p": 1,
+        "saltLength": 8,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": true,
+          "describe": "m=19MiB t=2 p=1",
+          "outputLength": 32,
+          "saltLength": 8
+        }
+      },
+      "notes": "m=19456 KiB（19 MiB）是 OWASP 对 Argon2id 的建议下限，t=2、盐 8 字节是规范最小值。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.upper-bounds",
+      "kind": "kdf.params.validate",
+      "title": "全部参数取上界",
+      "milestone": "M0",
+      "input": {
+        "m": 1048576,
+        "t": 16,
+        "p": 8,
+        "saltLength": 64,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "valid": true,
+          "describe": "m=1024MiB t=16 p=8",
+          "outputLength": 32,
+          "saltLength": 64
+        }
+      },
+      "notes": "上界能被合法构造出来，但**不应被本产品当作默认值**：1 GiB 内存在手机上是必然的 OOM。它只是「读方允许接受」的上限。",
+      "tags": [
+        "boundary",
+        "security"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.memory-below-min",
+      "kind": "kdf.params.validate",
+      "title": "内存低于 19 MiB 下限",
+      "milestone": "M0",
+      "input": {
+        "m": 19455,
+        "t": 3,
+        "p": 1,
+        "saltLength": 16,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "notes": "下限守的是「读方不得接受一份弱参数备份」。若允许读入 m=1MiB 的文件，攻击者就能用一份廉价生成的备份诱导本机在低代价下被爆破 —— 解密成本由文件决定，不是由本机决定。",
+      "tags": [
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.memory-above-max",
+      "kind": "kdf.params.validate",
+      "title": "内存超过 1 GiB 上限",
+      "milestone": "M0",
+      "input": {
+        "m": 1048577,
+        "t": 3,
+        "p": 1,
+        "saltLength": 16,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "notes": "上限与下限的性质完全不同：下限是「防止被诱导接受弱参数」，上限是「防止被诱导自杀」。两者都必须在解析输入时就卡死。",
+      "tags": [
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.iterations-below-min",
+      "kind": "kdf.params.validate",
+      "title": "迭代次数为 1",
+      "milestone": "M0",
+      "input": {
+        "m": 65536,
+        "t": 1,
+        "p": 1,
+        "saltLength": 16,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "notes": "t 是「时间成本」这一维度，与 m 的「空间成本」互补。允许 t=1 等于允许别人用一份便宜备份，把本机的爆破成本拉低到可接受范围。",
+      "tags": [
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.iterations-above-max",
+      "kind": "kdf.params.validate",
+      "title": "迭代次数为 17",
+      "milestone": "M0",
+      "input": {
+        "m": 65536,
+        "t": 17,
+        "p": 1,
+        "saltLength": 16,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "notes": "上限不是为了限制安全，而是防止「一个 t=100000 的文件把解锁变成死机」。",
+      "tags": [
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.parallelism-zero",
+      "kind": "kdf.params.validate",
+      "title": "并行度为 0",
+      "milestone": "M0",
+      "input": {
+        "m": 65536,
+        "t": 3,
+        "p": 0,
+        "saltLength": 16,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.parallelism-above-max",
+      "kind": "kdf.params.validate",
+      "title": "并行度为 9",
+      "milestone": "M0",
+      "input": {
+        "m": 65536,
+        "t": 3,
+        "p": 9,
+        "saltLength": 16,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.salt-too-short",
+      "kind": "kdf.params.validate",
+      "title": "盐长度 7 字节",
+      "milestone": "M0",
+      "input": {
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "saltLength": 7,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "notes": "Argon2 规范要求盐至少 8 字节；比规范更宽松的读方是攻击面。",
+      "tags": [
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.salt-too-long",
+      "kind": "kdf.params.validate",
+      "title": "盐长度 65 字节",
+      "milestone": "M0",
+      "input": {
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "saltLength": 65,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.output-length-not-32",
+      "kind": "kdf.params.validate",
+      "title": "输出长度不是 32 字节",
+      "milestone": "M0",
+      "input": {
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "saltLength": 16,
+        "outputLength": 16
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "notes": "输出长度固定 32（AES-256 密钥长度）。允许可变只会带来「少配几位」的风险，没有收益。",
+      "tags": [
+        "crypto"
+      ]
+    },
+    {
+      "id": "kdf.params.validate.missing-fields",
+      "kind": "kdf.params.validate",
+      "title": "缺少 m / t / p 字段",
+      "milestone": "M0",
+      "input": {},
+      "expect": {
+        "ok": false,
+        "errorCode": "PFC_E_VALIDATION"
+      },
+      "notes": "结构性缺字段与数值越界是两种错误，必须给不同的错误码：前者说明调用方写错了代码，后者说明输入数据有问题。"
+    },
+    {
+      "id": "kdf.params.bounds.locked",
+      "kind": "kdf.params.bounds",
+      "title": "参数范围常量",
+      "milestone": "M0",
+      "input": {},
+      "expect": {
+        "ok": true,
+        "value": {
+          "minMemoryKiB": 19456,
+          "maxMemoryKiB": 1048576,
+          "minIterations": 2,
+          "maxIterations": 16,
+          "minParallelism": 1,
+          "maxParallelism": 8,
+          "minSaltLength": 8,
+          "maxSaltLength": 64,
+          "defaultSaltLength": 16,
+          "defaultOutputLength": 32
+        }
+      },
+      "notes": "maxMemoryKiB 是安全参数：它拦的是「构造一个 m=16GiB 的文件让受害设备 OOM」。任何以「优化启动速度」为由调小它的改动，都必须先解释这一点怎么办。",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "id": "kdf.params.presets.locked",
+      "kind": "kdf.params.presets",
+      "title": "三套预设参数",
+      "milestone": "M0",
+      "input": {},
+      "expect": {
+        "ok": true,
+        "value": {
+          "mobile": "m=64MiB t=3 p=1",
+          "desktop": "m=256MiB t=3 p=4",
+          "export": "m=64MiB t=3 p=1",
+          "mobileMemoryKiB": 65536,
+          "desktopMemoryKiB": 262144,
+          "exportEqualsMobile": true
+        }
+      },
+      "notes": "导出参数必须与移动端一致，否则「在桌面上导出的备份，手机上打不开/打开极慢」会变成一个必然发生的支持问题。",
+      "tags": [
+        "cross-platform"
+      ]
+    },
+    {
+      "id": "kdf.params.roundtrip.mobile",
+      "kind": "kdf.params.roundtrip",
+      "title": "移动端参数的 JSON 往返",
+      "milestone": "M0",
+      "input": {
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "saltLength": 16,
+        "outputLength": 32
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "json": {
+            "m": 65536,
+            "outputLength": 32,
+            "p": 1,
+            "saltLength": 16,
+            "t": 3
+          },
+          "roundtripEqual": true,
+          "describe": "m=64MiB t=3 p=1"
+        }
+      },
+      "notes": "锁定 JSON 字段名。这些字段会写进导出载荷，改名等于让旧备份失去可读性。",
+      "tags": [
+        "format"
+      ]
+    },
+    {
+      "id": "kdf.params.roundtrip.salt-omitted",
+      "kind": "kdf.params.roundtrip",
+      "title": "省略 saltLength / outputLength 时取默认值",
+      "milestone": "M0",
+      "input": {
+        "m": 262144,
+        "t": 3,
+        "p": 4
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "json": {
+            "m": 262144,
+            "outputLength": 32,
+            "p": 4,
+            "saltLength": 16,
+            "t": 3
+          },
+          "roundtripEqual": true,
+          "describe": "m=256MiB t=3 p=4"
+        }
+      },
+      "notes": "缺省值也必须显式化后再序列化 —— 「没写」与「写了默认值」不能产生两种不同的载荷。",
+      "tags": [
+        "format"
+      ]
+    }
+  ]
+}

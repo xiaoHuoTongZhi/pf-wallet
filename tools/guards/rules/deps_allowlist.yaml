@@ -1,0 +1,158 @@
+# =============================================================================
+# 二级依赖登记表（deps.yaml 中 review 分类的申诉唯一入口）
+# =============================================================================
+# 每个条目必须回答三件事：
+#   justification —— 为什么非它不可（说清替代方案为何不行）
+#   dataFlow      —— 它可能接触到的数据，以及数据会去哪里
+#   reviewBy      —— 复核截止日；过期即 CI 失败，强制重新评估
+#
+# 违反本条目的写法：justification 写「需要它」、dataFlow 写「不会泄漏数据」。
+# 那不是在登记，那是在给自己发免责声明。
+#
+# 未被任何已解析依赖命中的条目 → warning（提示清理），不失败。
+# =============================================================================
+
+version: 1
+
+entries:
+  - package: flutter_secure_storage
+    usedBy: [pf_crypto]
+    justification: >-
+      iOS Keychain / Android Keystore 是系统提供的、唯一能对密钥做硬件级门控的存储。
+      无等效替代：自己用文件存密钥等于放弃硬件保护。
+    dataFlow: >-
+      仅写入：包裹后的数据库密钥（DEK 密文）、恢复码校验值、KDF 参数。
+      不写入：主密码、明文密钥、任何账目数据。不发起任何网络请求。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: local_auth
+    usedBy: [pf_crypto]
+    justification: >-
+      仅用于触发系统生物识别 UI（Face ID / 指纹）。真正的密钥门控由 Keychain 的
+      biometryCurrentSet 与 Keystore 的 setUserAuthenticationRequired 承担，
+      local_auth 的返回值只用于显示，不作为安全判定依据。
+    dataFlow: >-
+      不接触任何应用数据，只调用平台 BiometricPrompt 并返回 bool。
+      不存储生物特征模板（模板永不离开安全芯片）。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: path_provider
+    usedBy: [pf_data]
+    justification: 获取应用私有目录（iOS Application Support / Android filesDir）。系统 API 封装，无替代。
+    dataFlow: 仅返回路径字符串。不读写任何文件内容。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: sqflite_sqlcipher
+    usedBy: [pf_data]
+    justification: >-
+      移动端 SQLCipher 的唯一成熟封装。替代方案 sqflite + 自有加密不可行：
+      整库加密必须由 SQLite 页层完成，应用层加密无法兼顾索引与查询效率。
+    dataFlow: >-
+      访问本应用私有目录下的 pf_wallet.db。密钥通过 PRAGMA key 传入，
+      不落盘、不进日志。库文件本身为 AES-256 密文。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: sqlcipher_flutter_libs
+    usedBy: [pf_data]
+    justification: 提供各平台预编译的 SQLCipher 原生库，避免自行交叉编译。
+    dataFlow: 纯原生库二进制，无 Dart 侧数据面。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: file_picker
+    usedBy: [pf_io]
+    justification: >-
+      导入时需要用户从「文件」App / 系统文件选择器挑选 .pfb 加密文件。
+      替代方案 file_selector 在 Android 上体验较差且部分机型不支持 SAF，评估后弃用。
+    dataFlow: >-
+      只返回用户显式选中的文件。仅用于读取 .pfb 加密容器，
+      不做任何目录遍历或后台扫描。读取完成后立即关闭句柄。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: share_plus
+    usedBy: [pf_io]
+    justification: >-
+      导出后需要把 .pfb 文件交给系统分享面板（存网盘 / AirDrop / 发给自己的另一台设备）。
+      这是「无后端同步」的核心交付通道，无替代方案可直接调用系统分享。
+    dataFlow: >-
+      只传出用户主动导出的、已经 AES-256-GCM 加密的 .pfb 文件。
+      绝不传出明文数据库或密钥材料。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: flutter_local_notifications
+    usedBy: [pf_mobile]
+    justification: 预算超支提醒与账单日提醒需要本地通知。纯本地调度，不经过任何推送服务。
+    dataFlow: >-
+      通知正文只含金额与分类名（用户可在设置中关闭）。
+      显式不使用任何 FCM/APNs 远程推送通道。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: web_socket_channel
+    usedBy: []
+    justification: >-
+      非主动引入：package:test 的 VM 测试运行器经由 shelf_web_socket 带上来的传递依赖。
+      没有任何 shipping 代码引用它 —— banned_api.yaml 的 no-network-client 规则
+      会把任何 WebSocket 用法拦在编译前的扫描阶段。
+      留着这条登记而不是从 review 列表里删掉 web_socket_channel，
+      是为了让「它为什么会出现在 lock 里」这个问题在下一次 review 时仍有答案。
+    dataFlow: >-
+      仅存在于开发/CI 依赖树（dependency: transitive）。不进入发布产物，不接触用户数据。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: http
+    usedBy: []
+    justification: >-
+      非主动引入：melos（开发期任务编排，只写在**根 pubspec 的 dev_dependencies**）
+      经由 pub_updater 带上来的传递依赖，用于「检查 melos 自身是否有新版本」。
+      没有任何 shipping 代码引用它 —— banned_api.yaml 的 no-network-client 规则
+      会把任何 HTTP 客户端用法拦在编译前的扫描阶段。
+      这里刻意**不**为了消掉这条登记而把 melos 从工具链里删掉：
+      melos 是本仓唯一的任务编排入口（见 melos.yaml），
+      而它不写进根 dev_dependencies 就无法运行（melos 3.0 起要求本地安装）。
+      代价就是 lock 里多一个 http，收益是 melos.yaml 里那十几个脚本真的能跑。
+    dataFlow: >-
+      仅存在于开发/CI 依赖树（dependency: transitive）。不进入发布产物，不接触用户数据。
+      它对 https://pub.dev 的请求只发生在开发者本机执行 melos 时，
+      在 CI 上被 melos 自己的 isCI 判断直接跳过。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  # ---------------------------------------------------------------------------
+  # 以下条目保留为「已评估并明确拒绝」的记录，防止后来者重新捡起来。
+  # 它们不会命中任何已解析依赖，因此只会产生 warning，不影响 CI。
+  # ---------------------------------------------------------------------------
+
+  - package: device_info_plus
+    usedBy: []
+    justification: >-
+      已明确拒绝。设备型号 + 系统版本 + 可用内存是强指纹特征。
+      导出文件名里的 deviceId 改用首次启动生成并本地持久化的随机 ULID，不读取任何硬件标识。
+    dataFlow: 不适用（未采用）。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: package_info_plus
+    usedBy: []
+    justification: >-
+      已明确拒绝。导出文件需要的 schema 版本应由编译期常量提供（pf_core 中的 PfBuildInfo），
+      无需运行时读取应用包信息。
+    dataFlow: 不适用（未采用）。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
+  - package: shared_preferences
+    usedBy: []
+    justification: >-
+      已明确拒绝。Android 上落在明文 XML，iOS 上落在明文 plist。
+      所有设置项（含主题配色）一律进加密数据库的 app_setting 表。
+    dataFlow: 不适用（未采用）。
+    owner: "@owner"
+    reviewBy: "2027-03-15"

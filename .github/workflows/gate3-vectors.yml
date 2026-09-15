@@ -1,0 +1,137 @@
+# =============================================================================
+# 关卡 3 · 向量门禁
+# =============================================================================
+# 内容：黄金测试向量在三个平台上跑通，且**三个平台的判定完全一致**。
+#
+# 为什么这一关不能被关卡 2 取代：
+#
+#   关卡 2 跑的是单测，验证的是「代码逻辑自洽」。
+#   关卡 3 跑的是向量，验证的是「字节级输出与我签入的契约一致」，
+#   而且是在三个不同的平台、三个不同的 CPU 架构上。
+#
+#   本项目最可能出的跨平台事故，恰好都是字节级的：
+#     - 浮点行为（虽然金额不用浮点，但任何一处漏用都会在这里暴露）
+#     - 字节序处理（手写的 u16/u32/u64 读写是最容易写错的地方）
+#     - 字符串 → 字节的编码（UTF-8 规范化在英文环境下"看起来也一样"）
+#     - 换行符（CRLF 混进被哈希的载荷里）
+#
+#   只在一个平台上跑向量，等于把这四类事故的发现时间推迟到
+#   「用户的备份文件在另一台机器上打不开」的那一刻。
+#
+# 一致性判定不看耗时、不看时间戳，只看「用例 ID + 状态」的摘要 ——
+# 详见 tools/ci/compare_verdicts.py。
+# =============================================================================
+name: gate3-vectors
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: gate3-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MELOS_VERSION: 6.3.2
+  PUB_MAX_CONCURRENT_DOWNLOADS: "4"
+
+jobs:
+  golden-vectors:
+    name: 黄金向量 · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 读取 Flutter 版本
+        id: flutter-version
+        shell: bash
+        run: echo "version=$(cat .flutter-version)" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          channel: stable
+          cache: true
+
+      # melos 的全局可执行目录三个平台不同（Unix：$HOME/.pub-cache/bin；
+      # Windows：%LOCALAPPDATA%\Pub\Cache\bin）。写死前者会让 Windows 作业
+      # 在下一步以 "melos: command not found" 失败。完整说明见 gate1-static.yml。
+      - name: 安装 melos
+        shell: bash
+        run: |
+          dart pub global activate melos "$MELOS_VERSION"
+
+          if [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then
+            PUB_BIN_POSIX="$(cygpath -u "$LOCALAPPDATA")/Pub/Cache/bin"
+            PUB_BIN="$(cygpath -w "$PUB_BIN_POSIX")"
+          else
+            PUB_BIN_POSIX="$HOME/.pub-cache/bin"
+            PUB_BIN="$PUB_BIN_POSIX"
+          fi
+
+          echo "$PUB_BIN" >> "$GITHUB_PATH"
+          echo "melos 可执行目录：$PUB_BIN"
+          ls -1 "$PUB_BIN_POSIX"
+
+      # 用 flutter pub get 而不是 melos bootstrap：后者要自行判断
+      # 「这是不是 Flutter 工作区」，判断错就退回 dart pub get，
+      # pf_mobile 的 Flutter SDK 依赖会解析不到。
+      - name: 解析工作区依赖
+        run: flutter pub get
+
+      # 退出码约定（见 packages/pf_testkit/bin/vector_report.dart）：
+      #   0 = 全部通过且 pending 与基线一致
+      #   1 = 有向量失败，或 pending 集合与基线不符
+      #   2 = 向量文件 / 环境本身有问题
+      # 三种都让这一步失败，但报告内容不同，排障方向因此明确。
+      - name: 运行黄金向量
+        run: melos run vectors
+
+      # 失败时把「还剩多少未实现」打出来。
+      # 它不影响结果，但让日志里同时有「现在覆盖到哪」这个信息 ——
+      # 否则一个失败的门禁只能说明"有问题"，不能说明"进行到哪了"。
+      - name: 列出尚未实现的向量（仅信息）
+        if: always()
+        run: melos run vectors:pending
+
+      - name: 上传向量报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vectors-report-${{ matrix.os }}-${{ github.sha }}
+          path: build/vectors/report.json
+          if-no-files-found: error
+          retention-days: 30
+
+  verdict-consistency:
+    name: 跨平台判定一致性
+    needs: [golden-vectors]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载三个平台的报告
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vectors-report-*
+          path: reports
+
+      - name: 比对判定摘要
+        shell: bash
+        run: python3 tools/ci/compare_verdicts.py reports

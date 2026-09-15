@@ -1,0 +1,153 @@
+# =============================================================================
+# 关卡 1 · 静态门禁
+# =============================================================================
+# 内容：格式检查 → 静态分析 → 四个自定义门禁（依赖 / 禁用 API / 日志 / 平台清单）
+#
+# 为什么只在 ubuntu 上跑：
+#   这三类检查的结论与操作系统无关 —— dart format 是确定性的，
+#   analyze 的 lint 集合不随平台变化，自定义门禁读的是源文件文本。
+#   把与平台无关的检查铺到三个平台，只会让 CI 变慢三倍、
+#   并在三个地方暴露同一个失败，掩盖真正的平台差异（那是关卡 2、3 的职责）。
+#
+# 反过来，**跨平台**的检查也绝不能只在一处跑：
+#   浮点行为、文件系统大小写敏感性、路径分隔符、换行符。
+#   这些正是关卡 2 与关卡 3 存在的理由。
+# =============================================================================
+name: gate1-static
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的新提交作废上一次还在跑的检查 —— 静态门禁失败时人总是连推几次，
+# 不作废的话会排队等一串已经过时的运行。
+concurrency:
+  group: gate1-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MELOS_VERSION: 6.3.2
+  # pub 的并发下载数：CI 上设小一点，避免触发 pub.dev 的速率限制
+  PUB_MAX_CONCURRENT_DOWNLOADS: "4"
+
+jobs:
+  static-gate:
+    name: 静态门禁（格式 / 分析 / 自定义检查）
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # Flutter 版本从 .flutter-version 读取，而不是写死在 YAML 里。
+      # 写死会出现「本地 3.29.0、CI 3.32.0」这种漂移，
+      # 表现为「本地 format 通过、CI format 失败」，而根因与代码毫无关系。
+      - name: 读取 Flutter 版本
+        id: flutter-version
+        shell: bash
+        run: echo "version=$(cat .flutter-version)" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          channel: stable
+          cache: true
+
+      # melos 的全局可执行目录在三个平台上不在同一个位置：
+      #   Linux / macOS : $HOME/.pub-cache/bin
+      #   Windows       : %LOCALAPPDATA%\Pub\Cache\bin
+      #
+      # 只写前者，Windows 作业会在下一步以 "melos: command not found" 失败 ——
+      # 一个看起来与代码毫无关系、但会挡掉整个关卡 1 的失败。
+      #
+      # 两处必须注意的细节：
+      #   1. Windows 的 %LOCALAPPDATA% 在 bash 里是**反斜杠**形式（C:\Users\...），
+      #      直接拼 "$LOCALAPPDATA/Pub/Cache/bin" 会得到一个 MSYS 判不出来的路径，
+      #      必须先用 cygpath 转成 POSIX 形式再拼。
+      #   2. 写回 $GITHUB_PATH 时又要转回**反斜杠**形式 ——
+      #      Windows 上后续步骤默认走 pwsh，它不认 /c/Users/... 这种写法。
+      #      两个方向都得转，只转一边等于没转。
+      - name: 安装 melos
+        shell: bash
+        run: |
+          dart pub global activate melos "$MELOS_VERSION"
+
+          if [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then
+            PUB_BIN_POSIX="$(cygpath -u "$LOCALAPPDATA")/Pub/Cache/bin"
+            PUB_BIN="$(cygpath -w "$PUB_BIN_POSIX")"
+          else
+            PUB_BIN_POSIX="$HOME/.pub-cache/bin"
+            PUB_BIN="$PUB_BIN_POSIX"
+          fi
+
+          echo "$PUB_BIN" >> "$GITHUB_PATH"
+          echo "melos 可执行目录：$PUB_BIN"
+          ls -1 "$PUB_BIN_POSIX"
+
+      # 用 `flutter pub get` 而不是 `melos bootstrap`。
+      #
+      # 两者做的事在 pub workspaces 下等价（只有一份解析结果），
+      # 但 melos 需要自行判断「这是不是一个 Flutter 工作区」——
+      # 判断错就会退回 `dart pub get`，于是 pf_mobile 依赖的 Flutter SDK 包
+      # 解析不到，报一个与代码无关的错。
+      # 显式写 flutter，把这一步的判断从工具手里拿回来。
+      # melos.yaml 的 pub:get 脚本与 docs/M0_ACCEPTANCE.md 第 6 节用的也是这条命令。
+      - name: 解析工作区依赖
+        run: flutter pub get
+
+      - name: 打印工具版本（排障时第一眼要看的东西）
+        run: |
+          flutter --version
+          dart --version
+          melos --version
+
+      # ---- 1/2 格式 ----
+      # 用 --set-exit-if-changed 而不是 format:fix：
+      # CI 的职责是**报告**不一致，不是悄悄替你改。
+      # 让 CI 自动改格式，会让人永远不装编辑器格式化插件。
+      - name: 检查格式（不写盘）
+        run: melos run format
+
+      # ---- 2/2 静态分析 ----
+      # --fatal-infos 是刻意的：把 info 降级为不阻塞，
+      # 等于宣布「这个规则不重要」—— 那就应该直接删掉它。
+      # 留着一条永远不失败的规则，只会训练人忽略整个输出。
+      - name: 静态分析（infos / warnings 一律致命）
+        run: melos run analyze
+
+      # ---- 自定义门禁 ----
+      # 这些是 README 里那三条红线（不联网 / 不落明文 / 只有一份加密实现）
+      # 的机器可执行版本。分析器的 lint 管不到它们。
+      - name: 依赖黑名单（含传递依赖）
+        run: melos run guards:deps
+
+      - name: 禁用 API 扫描
+        run: melos run guards:banned-api
+
+      - name: 日志脱敏检查
+        run: melos run guards:logging
+
+      - name: 平台隐私清单检查
+        run: melos run guards:manifest
+
+      # 版本号藏在两个地方（代码常量与 pubspec），不一致时编译器与测试
+      # 都不会报错 —— 只有用户报障时给出的版本号会错。因此做成门禁。
+      - name: 版本号一致性
+        run: melos run guards:version
+
+      # 报告是排障的入口：失败时人去 artifact 里看具体是哪一条、哪个文件。
+      - name: 上传门禁报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: guards-report-${{ github.sha }}
+          path: build/guards/
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,21 @@
+name: pf_testkit
+description: >-
+  黄金测试向量框架：向量文件格式、驱动接口、运行器与跨平台一致性报告。
+  定位是「用数据锁定行为」——任何加密层或合并算法的改动，都必须先改向量再改实现。
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  args: ^2.6.0
+  crypto: ^3.0.6
+  path: ^1.9.0
+  pf_core: ^0.1.0
+  pf_crypto: ^0.1.0
+  pf_io: ^0.1.0
+
+dev_dependencies:
+  test: ^1.25.0

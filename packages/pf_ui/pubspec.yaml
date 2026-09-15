@@ -1,0 +1,20 @@
+name: pf_ui
+description: >-
+  PF Wallet 双端共享的表现层令牌：配色方案（含用户自定义配色）、排版尺度、
+  间距与圆角。只放"两端都一样的视觉决定"，不放任何页面。
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+  flutter: ">=3.29.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  pf_core: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

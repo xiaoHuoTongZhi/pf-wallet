@@ -1,0 +1,115 @@
+# =============================================================================
+# 日志敏感信息扫描规则
+# =============================================================================
+# 三条独立规则，任一命中即失败：
+#
+#   A. no-direct-log-sink
+#      在 shipping 范围内直接使用 print / debugPrint / stdout.write / developer.log …
+#      全部日志必须走 pf_core 的 PfLogger（M1 交付），因为它做白名单式序列化。
+#      正则只能拦住「明显错误」，真正保证不泄漏的是「所有输出只有一个出口」这条结构约束。
+#
+#   B. no-secret-interpolation
+#      任何字符串插值中出现密钥类标识符。
+#      理由：插值出来的字符串会进入异常栈、assert 消息、toString()，
+#      最终一定会出现在某个崩溃上报或日志里 —— 哪怕你从没写过 print。
+#
+#   C. no-secret-in-log-call
+#      调用名形如 log/info/warn/error/dump 的方法，实参里出现密钥类标识符。
+#
+# 能力边界（必须写清楚，不夸大）：
+#   正则无法判定「业务数据的脱敏」。金额、备注、商家名这些字段是否该进日志，
+#   取决于上下文。本案的解法是结构性的 —— PfLogger 只接受显式白名单字段，
+#   非法字段在编译期就不存在。对应的契约测试在 M1 由 pf_core 交付。
+# =============================================================================
+
+version: 1
+
+scope:
+  shipping:
+    - "apps/**"
+    - "packages/**"
+  exempt:
+    - "tools/**"
+    # pf_testkit 是 CI / 开发工具包，不进入用户设备产物。
+    # 它的 bin/ 是命令行入口 —— 输出是给开发者看的诊断文本，
+    # 与「应用日志不得含敏感数据」这条约束无关：它接触不到任何用户数据。
+    #
+    # 只豁免 bin/，不豁免 packages/pf_testkit/lib/**：
+    # 库代码将来可能被别处复用，保留检查的成本极低。
+    - "packages/pf_testkit/bin/**"
+
+# ---------------------------------------------------------------------------
+# 规则 A：直接使用日志出口
+# ---------------------------------------------------------------------------
+directSinks:
+  severity: error
+  patterns:
+    - '\bprint\s*\('
+    - '\bdebugPrint\s*\('
+    - '\bprinterr\s*\('
+    - '\bstdout\.write'
+    - '\bstdout\.writeln'
+    - '\bstdout\.add'
+    - '\bstderr\.write'
+    - '\bstderr\.writeln'
+    - '\bdeveloper\.log\s*\('
+    - '\bdart:developer[''"]'
+    - '\bdumpErrorToConsole\b'
+    - '\bFlutterError\.dumpErrorToConsole\b'
+
+# ---------------------------------------------------------------------------
+# 规则 B：密钥类标识符出现在字符串插值中
+# ---------------------------------------------------------------------------
+secretIdentifiers:
+  - password
+  - passphrase
+  - masterPassword
+  - masterKey
+  - rootKey
+  - dbKey
+  - databaseKey
+  - exportKey
+  - dek
+  - kek
+  - saltValue
+  - saltBytes
+  - nonceBytes
+  - privateKey
+  - secretKey
+  - secretBytes
+  - recoveryCode
+  - mnemonic
+  - seedPhrase
+  - plaintext
+  - plainBytes
+  - rawKey
+
+secretInterpolation:
+  severity: error
+  # 匹配 $identifier 与 ${identifier} 两种形态
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# 规则 C：日志类调用实参中出现密钥类标识符
+# ---------------------------------------------------------------------------
+logCallIdentifierPattern: '\b(log|logger|debug|info|warn|warning|error|trace|dump|verbose|fatal|print|assert|report)'
+secretInLogCall:
+  severity: error
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# 业务数据字段（金额 / 备注 / 商家）—— 正则不判定，仅提示
+# ---------------------------------------------------------------------------
+businessDataIdentifiers:
+  - amount
+  - note
+  - merchant
+  - memo
+  - payee
+  - accountName
+hint:
+  severity: info
+  enabled: true
+  message: >-
+    检测到业务字段出现在日志/异常路径中。正则无法判定是否应当脱敏，
+    请确认该处输出走的是 PfLogger 的白名单字段，而不是整对象 toString()。

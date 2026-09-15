@@ -1,0 +1,13 @@
+name: pf_core
+description: >-
+  PF Wallet 领域层：值对象（金额 / 币种）、稳定错误码、ID 生成、时钟与日志契约。
+  本包是整棵依赖树的叶子：零三方依赖、不依赖 Flutter、纯 Dart，可被任何宿主复用。
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+
+dev_dependencies:
+  test: ^1.25.0

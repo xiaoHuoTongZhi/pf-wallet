@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "suite": "container_trailer",
+  "title": "PFB 容器文件尾与密文摘要",
+  "description": "文件尾的 SHA-256 覆盖密文段，用来在**没有密码**的情况下区分「文件损坏」与「密码错误」。它不泄漏明文，因为密文本来就是公开的。",
+  "cases": [
+    {
+      "id": "container.trailer.decode.valid",
+      "kind": "container.trailer.decode",
+      "title": "解析合法文件尾",
+      "milestone": "M0",
+      "input": {
+        "hex": "00010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd50464246"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "digestAlgorithm": 1,
+          "digestHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+          "lengthBytes": 40
+        }
+      },
+      "notes": "摘要对象是**密文段**，不是明文。这是它能「免密码判断损坏」又不泄漏明文的原因。",
+      "tags": [
+        "format",
+        "security"
+      ]
+    },
+    {
+      "id": "container.trailer.decode.bad-magic",
+      "kind": "container.trailer.decode",
+      "title": "尾部魔数不是 PFBF",
+      "milestone": "M0",
+      "input": {
+        "hex": "00010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd58585858"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_DIGEST_MISMATCH"
+      },
+      "notes": "尾魔数坏掉最常见的成因是「文件被追加了数据」。报成 DIGEST_MISMATCH 而不是 HEADER_INVALID，是因为给用户的建议完全不同：前者说文件可能被改动过。"
+    },
+    {
+      "id": "container.trailer.decode.short",
+      "kind": "container.trailer.decode",
+      "title": "文件尾不足 40 字节",
+      "milestone": "M0",
+      "input": {
+        "hex": "00010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd504642"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_TRUNCATED"
+      }
+    },
+    {
+      "id": "container.trailer.decode.reserved-not-zero",
+      "kind": "container.trailer.decode",
+      "title": "文件尾保留字段非零",
+      "milestone": "M0",
+      "input": {
+        "hex": "00010001630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd50464246"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_HEADER_INVALID"
+      }
+    },
+    {
+      "id": "container.trailer.decode.unknown-digest-algorithm",
+      "kind": "container.trailer.decode",
+      "title": "摘要算法 ID 未知",
+      "milestone": "M0",
+      "input": {
+        "hex": "00020000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd50464246"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_HEADER_INVALID"
+      },
+      "notes": "摘要算法一旦换成弱的（如 MD5），完整性判断就失效了。只能追加新 ID，不得替换。",
+      "tags": [
+        "crypto"
+      ]
+    },
+    {
+      "id": "container.digest.verify.match",
+      "kind": "container.digest.verify",
+      "title": "密文与文件尾摘要一致",
+      "milestone": "M0",
+      "input": {
+        "trailerHex": "00010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd50464246",
+        "ciphertextHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "matches": true,
+          "computedDigestHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+          "declaredDigestHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+        }
+      }
+    },
+    {
+      "id": "container.digest.verify.ciphertext-tampered",
+      "kind": "container.digest.verify",
+      "title": "密文被改动一个字节",
+      "milestone": "M0",
+      "input": {
+        "trailerHex": "00010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd50464246",
+        "ciphertextHex": "000102030405067f08090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "matches": false,
+          "computedDigestHex": "8ae18d67693672a956a6652470fa17125c167d2763072565f5c782e8fe3a8885",
+          "declaredDigestHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+        }
+      },
+      "notes": "这一条与下一条一起，构成「文件损坏」与「密码错」的可区分性证明：摘要在无密码的情况下就能算出结论，因此用户得到的提示是准确的 ——「文件损坏，请换一份备份」和「密码不对」是完全不同的两句话。",
+      "tags": [
+        "security",
+        "ux"
+      ]
+    },
+    {
+      "id": "container.digest.verify.trailer-digest-tampered",
+      "kind": "container.digest.verify",
+      "title": "文件尾记录的摘要被改动",
+      "milestone": "M0",
+      "input": {
+        "trailerHex": "00010000000000000000000000000000000000000000000000000000000000000000000050464246",
+        "ciphertextHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "matches": false,
+          "computedDigestHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+          "declaredDigestHex": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "notes": "摘要本身不受任何保护，它只是「快速判断」的辅助，最终判据仍是 AEAD 的认证标签。",
+      "tags": [
+        "security"
+      ]
+    }
+  ]
+}

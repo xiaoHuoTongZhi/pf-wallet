@@ -1,0 +1,44 @@
+# =============================================================================
+# 编辑器侧的行尾与缩进约定
+# =============================================================================
+# 与 .gitattributes 是同一件事的两端：
+#
+#   .gitattributes  决定「文件进出仓库时」的字节形态
+#   .editorconfig   决定「文件在你编辑器里」的字节形态
+#
+# 只做前者，编辑器仍会把 Windows 上的 CRLF 写进工作区，
+# 于是 git 每次都报告「文件已修改」而 diff 为空。
+# 两者都做，才是「一次改对，四处一致」。
+# =============================================================================
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Dart 官方风格；与 analysis_options.yaml 的 formatter.page_width: 100 配套
+[*.dart]
+indent_size = 2
+max_line_length = 100
+
+# Markdown 里的行尾空格是「硬换行」的写法，不能删
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = off
+
+# 向量语料：格式由生成器负责，不做任何自动整理
+[test_vectors/**]
+insert_final_newline = true
+trim_trailing_whitespace = false
+
+# Windows 平台脚本必须 CRLF
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
+
+# GitHub Actions 工作流缩进 2 空格
+[.github/workflows/*.yml]
+indent_size = 2

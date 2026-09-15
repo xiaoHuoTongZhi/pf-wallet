@@ -1,0 +1,174 @@
+# =============================================================================
+# 禁用 API 扫描规则
+# =============================================================================
+# 定位：deps.yaml 管「引入了什么包」，本文件管「在代码里调用了什么能力」。
+# 两者互补 —— 一个包是干净的，不代表它的危险能力没被用上。
+#
+# 匹配方式：按「逻辑语句」匹配（跨行的括号配对后整体匹配），而非逐行匹配，
+# 因此多行调用不会被漏掉。见 tools/guards/lib/scan.dart。
+#
+# 抑制方式：在命中行的同一行或上一行写 `// guards:ignore <rule-id>`，
+#          且必须在该注释后写清理由，否则 review 时会被打回。
+# =============================================================================
+
+version: 1
+
+scope:
+  shipping:
+    - "apps/**"
+    - "packages/**"
+  exempt:
+    - "tools/**"
+
+rules:
+  # ---------------------------------------------------------------------------
+  - id: no-dynamic-execution
+    severity: error
+    description: 禁止任何形式的动态代码执行与反射
+    rationale: >-
+      导入文件是「外部输入」。一旦解析路径上存在反射或动态加载，
+      一个精心构造的 .pfb 文件就可能变成任意代码执行。
+      声明式解析（手写二进制读取 + JSON 反序列化）是本项目的硬约束。
+    patterns:
+      - 'import\s+[''"]dart:mirrors[''"]'
+      - '\bIsolate\.spawnUri\b'
+      - '\bProcess\.(run|runSync|start)\b'
+      - '\bFunction\.apply\b'
+      - '\bMirrorSystem\b'
+    appliesTo:
+      - "apps/**/*.dart"
+      - "packages/**/*.dart"
+    exemptPaths:
+      - "**/test/**"
+      - "**/*_test.dart"
+      - "**/*_golden.dart"
+
+  # ---------------------------------------------------------------------------
+  - id: no-network-client
+    severity: error
+    description: 禁止在应用代码里直接构造网络客户端
+    rationale: >-
+      「不联网也能完整使用」不是一句口号，是要能被机器检查的性质。
+      唯一的例外是局域网直传（pf_io 内的 raw socket），它必须走单独的登记条目。
+    patterns:
+      - '\bHttpClient\s*\('
+      - 'import\s+[''"]package:(http|dio|chopper|retrofit)/'
+      - 'import\s+[''"]dart:html[''"]'
+      - 'import\s+[''"]dart:js[''"]'
+      - 'import\s+[''"]dart:js_util[''"]'
+      - '\bWebSocket\.connect\b'
+      - '\bSecureSocket\.connect\b'
+    appliesTo:
+      - "apps/**/*.dart"
+      - "packages/**/*.dart"
+    exemptPaths:
+      - "**/test/**"
+      - "**/*_test.dart"
+
+  # ---------------------------------------------------------------------------
+  - id: no-tls-bypass
+    severity: error
+    description: 禁止关闭或削弱证书校验
+    rationale: 这类代码一旦写进来就会长期存活，且从 diff 里几乎看不出来。
+    patterns:
+      - 'badCertificateCallback\s*=>\s*\(?[^)]*\)?\s*=>\s*true'
+      - 'onBadCertificate\s*=>\s*\(?[^)]*\)?\s*=>\s*true'
+      - '\bSecurityContext\s*\(\s*\)\s*;\s*//\s*guards:allow-insecure'
+      - 'setTrustedCertificates\s*\(\s*\)\s*;'
+    appliesTo:
+      - "apps/**/*.dart"
+      - "packages/**/*.dart"
+
+  # ---------------------------------------------------------------------------
+  - id: no-insecure-random-in-crypto
+    severity: error
+    description: 加密层禁止使用非密码学安全的随机源
+    rationale: >-
+      math.Random() 是线性同余，输出可被少量样本反推。
+      在 IV / 盐 / 恢复码 / 密钥生成里用它是灾难性的静默失效：
+      程序不报错、功能正常、安全性归零。
+    patterns:
+      - '\bRandom\s*\(\s*\)'
+      - '\bRandom\s*\(\s*\d+\s*\)'
+    # allowPatterns 语义：若命中片段本身也匹配 allow 列表，则放行。
+    # 这里用来把 Random.secure() 与 Random() 区分开（前者不匹配上面的模式，
+    # 该列表作为显式豁免声明保留，便于将来模式调整时不误伤）。
+    allowPatterns:
+      - '\bRandom\.secure\s*\('
+    appliesTo:
+      - "packages/pf_crypto/**/*.dart"
+      - "packages/pf_data/**/*.dart"
+    exemptPaths:
+      - "**/test/**"
+      - "**/*_test.dart"
+
+  # ---------------------------------------------------------------------------
+  - id: no-weak-hash-in-crypto
+    severity: error
+    description: 加密层禁止使用 MD5 / SHA-1
+    rationale: >-
+      MD5 与 SHA-1 均已碰撞可行。即使某处只用于「完整性校验」，
+      完整性校验也是安全边界的一部分（例如校验恢复码）。统一禁止，不留解释空间。
+    patterns:
+      - '\b(md5|Md5|MD5)\b'
+      - '\b(sha1|Sha1|SHA1|SHA-1)\b'
+    appliesTo:
+      - "packages/pf_crypto/**/*.dart"
+    exemptPaths:
+      - "**/test/**"
+      - "**/*_test.dart"
+
+  # ---------------------------------------------------------------------------
+  - id: no-non-constant-time-compare
+    severity: error
+    description: 密钥与认证标签的比对必须是恒定时间
+    rationale: >-
+      短路的 == 与 ListEquality 会在第一个不同字节处返回，
+      攻击者可以通过计时差异逐字节还原正确的 MAC。
+      必须使用常量时间比较（见 pf_crypto 的 ConstantTime.equals）。
+    patterns:
+      - '\bListEquality\b'
+      - '\bsetEquals\s*\('
+      - '\blistEquals\s*\('
+    appliesTo:
+      - "packages/pf_crypto/**/*.dart"
+    exemptPaths:
+      - "**/test/**"
+      - "**/*_test.dart"
+
+  # ---------------------------------------------------------------------------
+  - id: no-raw-dylib-open-outside-data
+    severity: warning
+    description: 动态库加载仅允许出现在数据层
+    rationale: >-
+      DynamicLibrary.open 会在进程内执行任意原生代码。
+      本项目只在 pf_data 打开 SQLCipher 原生库，
+      其他任何位置出现都意味着有人在绕过依赖体系引入二进制。
+    patterns:
+      - '\bDynamicLibrary\.open\b'
+      - '\bDynamicLibrary\.process\b'
+    appliesTo:
+      - "apps/**/*.dart"
+      - "packages/**/*.dart"
+    exemptPaths:
+      - "packages/pf_data/**"
+      - "**/test/**"
+      - "**/*_test.dart"
+
+  # ---------------------------------------------------------------------------
+  - id: no-platform-secret-channel
+    severity: warning
+    description: 平台通道调用需显式登记
+    rationale: >-
+      MethodChannel 是绕过所有 Dart 层约定的后门。
+      每次使用都应在 pf_crypto 的平台桥接文件内，且调用点有注释说明用途。
+    patterns:
+      - '\bMethodChannel\s*\('
+      - '\bEventChannel\s*\('
+    appliesTo:
+      - "apps/**/*.dart"
+      - "packages/**/*.dart"
+    exemptPaths:
+      - "packages/pf_crypto/**"
+      - "**/test/**"
+      - "**/*_test.dart"

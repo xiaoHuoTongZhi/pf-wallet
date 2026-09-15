@@ -1,0 +1,482 @@
+{
+  "schemaVersion": 1,
+  "suite": "money",
+  "title": "金额、币种与定点运算",
+  "description": "金额一律以整数最小货币单位存储，绝不用浮点。本文件锁定三个不可妥协的行为：解析不静默舍入、跨币种不隐式换算、精度为 0 的币种不渲染小数。",
+  "cases": [
+    {
+      "id": "money.format.cny-grouped",
+      "kind": "money.format",
+      "title": "人民币千分位",
+      "milestone": "M0",
+      "input": {
+        "minorUnits": 123456789,
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "text": "1,234,567.89",
+          "isNegative": false,
+          "isZero": false
+        }
+      }
+    },
+    {
+      "id": "money.format.cny-negative",
+      "kind": "money.format",
+      "title": "负数金额",
+      "milestone": "M0",
+      "input": {
+        "minorUnits": -123456789,
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "text": "-1,234,567.89",
+          "isNegative": true,
+          "isZero": false
+        }
+      },
+      "notes": "负号在千分位之前。这一条看起来琐碎，但它是「支出」在 UI 上的唯一表现方式。"
+    },
+    {
+      "id": "money.format.one-cent-negative",
+      "kind": "money.format",
+      "title": "负一分钱",
+      "milestone": "M0",
+      "input": {
+        "minorUnits": -1,
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "text": "-0.01",
+          "isNegative": true,
+          "isZero": false
+        }
+      },
+      "notes": "整数部分是 0 时必须补出前导 0 —— 写成 -.01 是最常见的实现疏漏。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "money.format.zero-with-code",
+      "kind": "money.format",
+      "title": "零金额并追加币种代码",
+      "milestone": "M0",
+      "input": {
+        "minorUnits": 0,
+        "currency": "CNY",
+        "scale": 2,
+        "withCurrencyCode": true
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "text": "0.00 CNY",
+          "isNegative": false,
+          "isZero": true
+        }
+      }
+    },
+    {
+      "id": "money.format.jpy-no-decimal",
+      "kind": "money.format",
+      "title": "日元（无小数位）",
+      "milestone": "M0",
+      "input": {
+        "minorUnits": 1234,
+        "currency": "JPY",
+        "scale": 0
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "text": "1,234",
+          "isNegative": false,
+          "isZero": false
+        }
+      },
+      "notes": "精度为 0 的币种不能渲染出小数点。按统一 scale=2 处理会把 1234 日元变成 12.34 日元。",
+      "tags": [
+        "cross-currency"
+      ]
+    },
+    {
+      "id": "money.format.no-grouping",
+      "kind": "money.format",
+      "title": "关闭千分位",
+      "milestone": "M0",
+      "input": {
+        "minorUnits": 123456789,
+        "currency": "CNY",
+        "scale": 2,
+        "grouping": false
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "text": "1234567.89",
+          "isNegative": false,
+          "isZero": false
+        }
+      }
+    },
+    {
+      "id": "money.format.max-representable",
+      "kind": "money.format",
+      "title": "可表示上限（2^53-1 分）",
+      "milestone": "M0",
+      "input": {
+        "minorUnits": 9007199254740991,
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "text": "90,071,992,547,409.91",
+          "isNegative": false,
+          "isZero": false
+        }
+      },
+      "notes": "上限取 2^53-1（JS 安全整数），保证将来若有 Web 端行为与其他端完全一致。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "money.parse.symbol-and-grouping",
+      "kind": "money.parse",
+      "title": "带 ¥ 与千分位的输入",
+      "milestone": "M0",
+      "input": {
+        "text": "¥1,234.56",
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "minorUnits": 123456,
+          "formatted": "1,234.56"
+        }
+      }
+    },
+    {
+      "id": "money.parse.trailing-code",
+      "kind": "money.parse",
+      "title": "带尾随币种代码的输入",
+      "milestone": "M0",
+      "input": {
+        "text": "1234.56 CNY",
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "minorUnits": 123456,
+          "formatted": "1,234.56"
+        }
+      }
+    },
+    {
+      "id": "money.parse.negative-integer",
+      "kind": "money.parse",
+      "title": "负整数（无小数部分）",
+      "milestone": "M0",
+      "input": {
+        "text": "-12",
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "minorUnits": -1200,
+          "formatted": "-12.00"
+        }
+      },
+      "notes": "小数部分缺失时补零，而不是把 -12 当成 -12 分。"
+    },
+    {
+      "id": "money.parse.plus-and-short-fraction",
+      "kind": "money.parse",
+      "title": "+3.5",
+      "milestone": "M0",
+      "input": {
+        "text": "+3.5",
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "minorUnits": 350,
+          "formatted": "3.50"
+        }
+      }
+    },
+    {
+      "id": "money.parse.one-cent",
+      "kind": "money.parse",
+      "title": "最小正金额 0.01",
+      "milestone": "M0",
+      "input": {
+        "text": "0.01",
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "minorUnits": 1,
+          "formatted": "0.01"
+        }
+      },
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "money.parse.jpy-integer",
+      "kind": "money.parse",
+      "title": "日元整数输入",
+      "milestone": "M0",
+      "input": {
+        "text": "1234",
+        "currency": "JPY",
+        "scale": 0
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "minorUnits": 1234,
+          "formatted": "1,234"
+        }
+      },
+      "tags": [
+        "cross-currency"
+      ]
+    },
+    {
+      "id": "money.parse.rejects-excess-precision",
+      "kind": "money.parse",
+      "title": "精度超出币种小数位（1.234）",
+      "milestone": "M0",
+      "input": {
+        "text": "1.234",
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFC_E_FORMAT"
+      },
+      "notes": "**绝不能静默四舍五入。**把 1.234 悄悄变成 1.23 会让账目对不上，而用户永远查不出是哪一笔出的问题 —— 报错是这里唯一的正确行为。",
+      "tags": [
+        "security",
+        "ux"
+      ]
+    },
+    {
+      "id": "money.parse.rejects-fullwidth-digits",
+      "kind": "money.parse",
+      "title": "全角数字",
+      "milestone": "M0",
+      "input": {
+        "text": "１２３４",
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFC_E_FORMAT"
+      },
+      "notes": "中文输入法下极易产生。若不拒绝，会在不同输入法下得到难以复现的差异。"
+    },
+    {
+      "id": "money.parse.rejects-empty",
+      "kind": "money.parse",
+      "title": "空字符串",
+      "milestone": "M0",
+      "input": {
+        "text": "",
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFC_E_FORMAT"
+      }
+    },
+    {
+      "id": "money.sum.cny-mixed-signs",
+      "kind": "money.sum",
+      "title": "含正负的求和",
+      "milestone": "M0",
+      "input": {
+        "items": [
+          {
+            "minorUnits": 100,
+            "currency": "CNY",
+            "scale": 2
+          },
+          {
+            "minorUnits": 250,
+            "currency": "CNY",
+            "scale": 2
+          },
+          {
+            "minorUnits": -50,
+            "currency": "CNY",
+            "scale": 2
+          }
+        ],
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "minorUnits": 300,
+          "formatted": "3.00"
+        }
+      }
+    },
+    {
+      "id": "money.sum.empty",
+      "kind": "money.sum",
+      "title": "空集合求和",
+      "milestone": "M0",
+      "input": {
+        "items": [],
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "minorUnits": 0,
+          "formatted": "0.00"
+        }
+      },
+      "notes": "空集合返回该币种的零值，而不是报错 —— 空账本是一个合法状态。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "money.sum.rejects-cross-currency",
+      "kind": "money.sum",
+      "title": "跨币种求和",
+      "milestone": "M0",
+      "input": {
+        "items": [
+          {
+            "minorUnits": 100,
+            "currency": "CNY",
+            "scale": 2
+          },
+          {
+            "minorUnits": 100,
+            "currency": "USD",
+            "scale": 2
+          }
+        ],
+        "currency": "CNY",
+        "scale": 2
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFC_E_CURRENCY_MISMATCH"
+      },
+      "notes": "本项目不联网、拿不到汇率，因此绝不隐式换算。按 1:1 相加会让多币种账目彻底错乱且无法追溯。",
+      "tags": [
+        "security",
+        "cross-currency"
+      ]
+    },
+    {
+      "id": "currency.equality.same-code-and-scale",
+      "kind": "currency.equality",
+      "title": "代码与精度都相同",
+      "milestone": "M0",
+      "input": {
+        "leftCurrency": "CNY",
+        "leftScale": 2,
+        "rightCurrency": "CNY",
+        "rightScale": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "equal": true,
+          "hashEqual": true,
+          "left": "CNY",
+          "right": "CNY"
+        }
+      }
+    },
+    {
+      "id": "currency.equality.same-code-different-scale",
+      "kind": "currency.equality",
+      "title": "代码相同但精度不同",
+      "milestone": "M0",
+      "input": {
+        "leftCurrency": "CNY",
+        "leftScale": 2,
+        "rightCurrency": "CNY",
+        "rightScale": 0
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "equal": false,
+          "hashEqual": false,
+          "left": "CNY",
+          "right": "CNY"
+        }
+      },
+      "notes": "精度是币种定义的一部分：同为 CNY 但一个按分、一个按元，相加会差 100 倍。因此相等判定必须带上 scale。",
+      "tags": [
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "currency.equality.cny-vs-jpy",
+      "kind": "currency.equality",
+      "title": "人民币与日元",
+      "milestone": "M0",
+      "input": {
+        "leftCurrency": "CNY",
+        "leftScale": 2,
+        "rightCurrency": "JPY",
+        "rightScale": 0
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "equal": false,
+          "hashEqual": false,
+          "left": "CNY",
+          "right": "JPY"
+        }
+      },
+      "notes": "两者货币符号都是 ¥，因此渲染时必须靠币种代码区分，不能只靠符号。",
+      "tags": [
+        "cross-currency",
+        "ux"
+      ]
+    }
+  ]
+}

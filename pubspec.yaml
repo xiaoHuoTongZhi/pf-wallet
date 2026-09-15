@@ -1,0 +1,47 @@
+# PF Wallet —— 工作区根 pubspec
+#
+# 使用 Dart 3.7+ 的 pub workspaces（`workspace:` 字段）：
+#   - 全仓只有一份 pubspec.lock 与一份 .dart_tool/package_config.json
+#   - 依赖版本在一次解析中统一求解，杜绝"同一个包在两端解析出不同版本"
+#   - CI 只需在根目录执行一次 `flutter pub get`
+#
+# 注意：本仓含 Flutter 成员，根目录也必须用 `flutter pub get`（不能用 `dart pub get`）。
+name: pf_wallet_workspace
+description: >-
+  PF Wallet —— 本地优先、无后端、隐私至上的个人记账应用。
+  本文件是 monorepo 工作区根，本身不发布、不含代码。
+publish_to: none
+
+environment:
+  sdk: ^3.7.0
+
+workspace:
+  - apps/pf_mobile
+  - packages/pf_core
+  - packages/pf_crypto
+  - packages/pf_data
+  - packages/pf_io
+  - packages/pf_testkit
+  - packages/pf_ui
+  - tools/guards
+
+# 仅根节点持有的开发依赖：所有 workspace 成员都能解析到，
+# 因此各成员无需重复声明（这是 pub workspaces 的价值之一）。
+dev_dependencies:
+  lints: ^5.0.0
+
+  # melos —— monorepo 任务编排（见 melos.yaml）。
+  #
+  # 为什么必须写进这里，而不是只在 CI 里 `dart pub global activate melos`：
+  #   melos 3.0 起，**全仓版不再够用**。运行时它会去找「与 melos.yaml 同级的
+  #   pubspec.yaml 中的本地安装」，找不到就直接退出并提示：
+  #
+  #     Found a melos.yaml file in "..." but no local installation of Melos.
+  #
+  #   也就是说，光装全局 melos 会让 `melos run format` 在任何机器上都失败 ——
+  #   而失败发生在检查第一行代码之前。
+  #
+  # 为什么钉在 6.3.2 而不是最新版：
+  #   6.3.3 起要求 Dart SDK ^3.8.0，而 .flutter-version 钉住的 Flutter 3.29.0
+  #   自带 Dart 3.7.0，于是依赖求解会失败。详细说明见 melos.yaml 头部。
+  melos: 6.3.2

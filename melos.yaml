@@ -1,0 +1,156 @@
+# melos —— monorepo 任务编排
+#
+# 定位：melos 只负责「并行/批量执行命令」与「脚本别名」。
+# 它不负责依赖解析 —— 依赖解析由 pub workspaces（根 pubspec.yaml 的 workspace 字段）承担。
+# 因此这里显式关闭 pubspec_overrides，避免 melos 生成覆盖文件与 workspaces 打架。
+#
+# 版本区间（两端都是硬约束，不是随手写的）：
+#
+#   下界 melos 6.3.0 —— 该版本起才正确识别 Dart pub workspaces。
+#                       更早的版本会退回 pubspec_overrides 那套做法，与本仓设计冲突。
+#   上界 melos 6.3.2 —— 6.3.3 起要求 Dart SDK ^3.8.0，而本仓由 .flutter-version
+#                       钉住的 Flutter 3.29.0 自带的 Dart 是 3.7.0。
+#                       于是 6.3.3 会在 `dart pub global activate` 这一步直接失败：
+#
+#                         Because pub global activate depends on melos >=6.3.3
+#                         which requires SDK version ^3.8.0, version solving failed.
+#
+#                       这个失败发生在**任何一行代码被检查之前**，看起来与项目无关。
+#                       CI 里钉的就是 6.3.2（见 .github/workflows/*.yml 的 MELOS_VERSION）。
+#
+#                       要么后面把 Flutter 升到 3.32+（Dart 3.8+）再抬这个上界，
+#                       要么就不要动 —— 升 Flutter 是工具链变更，得连同
+#                       `dart format` 的结果一起重新验证，不能顺手做。
+name: pf_wallet
+
+packages:
+  - apps/**
+  - packages/**
+  - tools/**
+
+command:
+  bootstrap:
+    # pub workspaces 已保证全仓一份 package_config.json，不需要 pubspec_overrides.yaml
+    usePubspecOverrides: false
+  version:
+    # 本仓不发布任何 package，禁止 melos 改版本号
+    includeScopes: false
+    updateGitTagRefs: false
+
+scripts:
+  # ---------- 依赖 ----------
+  pub:get:
+    description: 在仓库根解析并安装整个工作区依赖（必须用 flutter pub get）
+    run: flutter pub get
+
+  # ---------- 格式与静态分析 ----------
+  format:
+    description: 检查格式，不写盘；不符合即失败
+    run: dart format --output=none --set-exit-if-changed apps packages tools
+
+  format:fix:
+    description: 就地格式化
+    run: dart format apps packages tools
+
+  analyze:
+    description: 全包静态分析（infos / warnings 一律致命）
+    # 用 flutter analyze 而非 dart analyze：它同样能分析纯 Dart 包，
+    # 且会额外解析 Flutter SDK 内的符号，避免把「用错了 framework API」漏到 runtime。
+    # --fatal-infos 是有意的：info 一旦能随手放过，lint 就退化成建议。
+    run: >-
+      melos exec --fail-fast
+      -- flutter analyze --fatal-infos --fatal-warnings
+
+  # ---------- 测试 ----------
+  # 统一用 flutter test 而不是「纯 Dart 包用 dart test、Flutter 包用 flutter test」。
+  #
+  # 理由（不是懒，是刻意的）：
+  #   1. flutter test 的入口条件是「包配置里能解析到 test_api」，而 package:test
+  #      本身就依赖 test_api —— 因此它对纯 Dart 包同样有效，一条命令覆盖全部成员。
+  #   2. 按包分类需要维护一份「谁是 Flutter 包」的名单。名单会随新增包过期，
+  #      而过期的表现是「某个包的测试静默地不再被执行」—— 最坏的一种失败。
+  #   3. 代价只是纯 Dart 包多花一次 flutter_tester 启动（几百毫秒），
+  #      换掉一整类「名单漏了新包」的风险，划算。
+  test:
+    description: 运行所有含 test/ 目录的包的单元测试
+    run: melos exec --fail-fast --dir-exists=test -- flutter test
+
+  test:cov:
+    description: 全包测试并产出 coverage/lcov.info
+    run: melos exec --fail-fast --dir-exists=test -- flutter test --coverage
+
+  # ---------- 黄金测试向量 ----------
+  vectors:
+    description: 跑全部黄金向量，产出 build/vectors/report.json
+    run: dart run packages/pf_testkit/bin/vector_report.dart
+
+  vectors:pending:
+    description: 只列出尚未实现的向量（观察 M1/M2 待办）
+    run: dart run packages/pf_testkit/bin/vector_report.dart --list-pending
+
+  vectors:forge:
+    description: 用当前实现产出对照表（build/vectors/forged/，不会也不能写回 test_vectors/）
+    run: dart run packages/pf_testkit/bin/vector_forge.dart
+
+  # ---------- 自定义门禁脚本 ----------
+  #
+  # 关于下面这几个脚本为什么用 `&&` 串联、而不用 melos 的 `steps:`：
+  #
+  #   `steps:` 在 Windows 上是 melos 生成一段 cmd 命令来逐个跑的，模板形如
+  #
+  #     echo "step" && melos run X || VER>NUL && if %ERRORLEVEL% NEQ 0 (echo __FAILURE__)
+  #
+  #   cmd 的 `||` / `&&` 左结合，而 `VER>NUL` 又把 ERRORLEVEL 归零，
+  #   于是**中间某一步失败后仍会继续跑，最后 melos 报 SUCCESS**。
+  #   一个会静默通过的门禁比没有门禁更糟 —— 它给人以「检查过了」的错觉，
+  #   而本项目的全部价值都建立在「失败必须响」之上。
+  #
+  #   `&&` 链由 shell 自己负责短路：失败立刻中止，且退出码非零。
+  #   Linux / macOS 上两种写法行为一致，因此统一用 `&&`，不留平台分叉。
+  guards:
+    description: 全部自定义门禁（依赖黑名单 / 禁用 API / 日志脱敏 / 平台清单）
+    run: >-
+      melos run guards:deps && melos run guards:banned-api &&
+      melos run guards:logging && melos run guards:manifest &&
+      melos run guards:version
+
+  guards:deps:
+    description: 依赖黑名单（含传递依赖）与来源审计
+    run: dart run tools/guards/bin/guards.dart deps
+
+  guards:banned-api:
+    description: 禁用 API 扫描（动态执行 / 反射 / 网络客户端等）
+    run: dart run tools/guards/bin/guards.dart banned-api
+
+  guards:logging:
+    description: 禁止敏感数据进日志
+    run: dart run tools/guards/bin/guards.dart logging
+
+  guards:manifest:
+    description: Android/iOS 平台隐私清单检查（allowBackup / 权限 / 备份规则）
+    run: dart run tools/guards/bin/guards.dart manifest
+
+  guards:version:
+    description: 版本号一致性（PfBuildInfo.appVersion ↔ 各 pubspec 的 version）
+    run: dart run tools/guards/bin/guards.dart version
+
+  # ---------- CI 三关卡聚合（本地复现 CI，见 docs/M0_ACCEPTANCE.md）----------
+  #
+  # 同样用 `&&` 而不是 `steps:`，理由见上面 `guards` 处的说明 ——
+  # 在 Windows 上，`steps:` 的失败会被吞掉，于是「本机跑一遍 ci:all 全绿」
+  # 这句话就失去了意义，而这正是本文件存在的目的。
+  ci:gate1:
+    description: 关卡 1 · 静态门禁
+    run: melos run format && melos run analyze && melos run guards
+
+  ci:gate2:
+    description: 关卡 2 · 测试门禁
+    run: melos run test
+
+  ci:gate3:
+    description: 关卡 3 · 向量门禁
+    run: melos run vectors
+
+  ci:all:
+    description: 本地一次性复现全部三关卡
+    run: melos run ci:gate1 && melos run ci:gate2 && melos run ci:gate3

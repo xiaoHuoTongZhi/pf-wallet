@@ -1,0 +1,77 @@
+# =============================================================================
+# 行尾与文件类型规范化
+# =============================================================================
+# 这个文件解决的不是「风格问题」，而是一个**会让三关卡在 CI 上无缘无故变红**的问题：
+#
+#   本机是 Windows。若仓库里没有这份声明，同一个文件在不同机器上可能以
+#   LF 或 CRLF 落盘，而三处判定都对此敏感：
+#
+#     1. 关卡 1  `dart format --set-exit-if-changed`
+#        —— 一行 CRLF 就能让格式检查失败，而 diff 看起来「什么都没改」。
+#     2. 关卡 3  向量的输入里含文本载荷（如 contentHash 的来源、JSON 字段）。
+#        混入 CRLF 会让「本机能过、Linux 不能过」，且两个平台的十六进制值
+#        都对不上，排障方向会被引向实现而根因是检出。
+#     3. 门禁脚本按行读源码（deps / banned-api / logging / manifest），
+#        以 $ 结尾的匹配在 CRLF 下行为不同。
+#
+# 因此规则是「**入哪一版，出哪一版，完全由本文件决定**」，
+# 不依赖任何人机器上的 core.autocrlf 设置。
+# =============================================================================
+
+# 默认：全部文本文件入库与检出统一 LF
+* text=auto eol=lf
+
+# ---- 二进制：不做行尾转换，也不参与文本 diff ----
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.tar  binary
+*.jar  binary
+*.so   binary
+*.dll  binary
+*.dylib binary
+*.exe  binary
+*.ttf  binary
+*.otf  binary
+*.woff  binary
+*.woff2 binary
+
+# ---- 本项目的加密产物：绝不允许任何字节级改写 ----
+*.pfb binary
+*.pfk binary
+*.db  binary
+*.sqlite  binary
+*.sqlite3 binary
+
+# ---- Windows 平台脚本必须保留 CRLF，否则 cmd / PowerShell 解析出错 ----
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# ---- 黄金向量：字节级契约，禁用一切转换 ----
+# test_vectors/ 下的文件是「数据锁住行为」的那份数据。
+# 它们被当作字节读入并参与判定，因此**不做 text 处理**（-text = 不转换）。
+# 新增向量文件不需要改这里 —— 目录级规则已经覆盖。
+test_vectors/** -text
+
+# ---- 参与机器判定的配置文件：显式声明为 LF ----
+# 这些文件的内容会被门禁脚本与 CI 直接解析，行尾必须确定。
+pubspec.lock            text eol=lf
+melos.yaml              text eol=lf
+analysis_options.yaml   text eol=lf
+.flutter-version        text eol=lf
+*.dart                  text eol=lf
+*.yaml                  text eol=lf
+*.yml                   text eol=lf
+*.json                  text eol=lf
+*.md                    text eol=lf
+
+# ---- 语言统计：避免把向量语料算成「代码」----
+test_vectors/** linguist-vendored
+test_vectors/** linguist-documentation

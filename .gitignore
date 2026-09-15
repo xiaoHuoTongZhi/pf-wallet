@@ -1,0 +1,54 @@
+# ---- Dart / Flutter ----
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+coverage/
+*.lock.orig
+
+# pubspec.lock 必须入库（可复现构建 + 依赖审计基准）
+!pubspec.lock
+
+# ---- 门禁产物 ----
+/build/guards/
+/coverage/
+
+# ---- 密钥与本地数据：任何情况下不得入库 ----
+*.pfb
+*.pfk
+**/pf_wallet.db
+**/pf_wallet.db-*
+**/*.sqlite
+**/*.sqlite3
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+key.properties
+**/google-services.json
+**/GoogleService-Info.plist
+.env
+.env.*
+
+# ---- IDE / OS ----
+.idea/
+.vscode/*
+!.vscode/settings.json
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 平台生成物 ----
+apps/pf_mobile/android/.gradle/
+apps/pf_mobile/android/local.properties
+apps/pf_mobile/android/key.properties
+apps/pf_mobile/ios/Pods/
+apps/pf_mobile/ios/.symlinks/
+apps/pf_mobile/ios/Flutter/Flutter.framework
+apps/pf_mobile/ios/Flutter/Generated.xcconfig
+apps/pf_mobile/ios/Flutter/flutter_export_environment.sh
+apps/pf_mobile/windows/flutter/ephemeral/
+apps/pf_mobile/macos/Flutter/ephemeral/
+apps/pf_mobile/linux/flutter/ephemeral/

@@ -1,0 +1,19 @@
+name: pf_io
+description: >-
+  PF Wallet 导入导出与同步：记录版本模型、合并裁决规则、导入导出契约。
+  M0 交付合并裁决规则的完整实现（它是全项目最容易写错、也最难测的一处逻辑），
+  以及导入导出的接口契约；实际操作流程与冲突 UI 属 M3。
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  pf_core: ^0.1.0
+  pf_crypto: ^0.1.0
+  pf_data: ^0.1.0
+
+dev_dependencies:
+  test: ^1.25.0

@@ -1,0 +1,160 @@
+# =============================================================================
+# 关卡 2 · 测试门禁
+# =============================================================================
+# 内容：单元测试 / 性质测试（可交换性、幂等性、收敛性）在三个平台上跑通
+#
+# 为什么必须三个平台都跑：
+#   - **Windows 与 macOS / Linux 的路径行为不同**（分隔符、大小写敏感性、
+#     非法字符集、长路径）。文件原子写、导出文件名拼接、临时目录清理
+#     这类逻辑只在其中一个平台上坏掉是常态。
+#   - Windows 上 Dart 的 `int` 仍是 64 位，但 `dart:io` 的某些行为
+#     （如 rename 对已存在目标文件的语义）与 POSIX 不同 ——
+#     而"导出时先写 .tmp 再 rename"正是本项目依赖这个语义的地方。
+#   - macOS 的默认文件系统大小写不敏感，Linux 敏感。
+#     一个把 `Ledger` 与 `ledger` 当两个文件的项目在两者上都"能跑"，
+#     但行为不一致。
+#
+# 反过来说：只在 ubuntu 上跑测试，等于把这三类事故推迟到用户设备上才发生。
+# =============================================================================
+name: gate2-test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: gate2-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MELOS_VERSION: 6.3.2
+  PUB_MAX_CONCURRENT_DOWNLOADS: "4"
+
+jobs:
+  unit-tests:
+    name: 单元测试 · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      # 三个平台都跑完再汇报，而不是一个失败就取消其余两个。
+      # 「只在 Windows 上失败」这个结论本身，就是最有价值的信息；
+      # fail-fast 会把它变成一个含糊的「某处失败」。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 读取 Flutter 版本
+        id: flutter-version
+        shell: bash
+        run: echo "version=$(cat .flutter-version)" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          channel: stable
+          cache: true
+
+      # melos 的全局可执行目录三个平台不同（Unix：$HOME/.pub-cache/bin；
+      # Windows：%LOCALAPPDATA%\Pub\Cache\bin）。写死前者会让 Windows 作业
+      # 在下一步以 "melos: command not found" 失败。完整说明见 gate1-static.yml。
+      - name: 安装 melos
+        shell: bash
+        run: |
+          dart pub global activate melos "$MELOS_VERSION"
+
+          if [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then
+            PUB_BIN_POSIX="$(cygpath -u "$LOCALAPPDATA")/Pub/Cache/bin"
+            PUB_BIN="$(cygpath -w "$PUB_BIN_POSIX")"
+          else
+            PUB_BIN_POSIX="$HOME/.pub-cache/bin"
+            PUB_BIN="$PUB_BIN_POSIX"
+          fi
+
+          echo "$PUB_BIN" >> "$GITHUB_PATH"
+          echo "melos 可执行目录：$PUB_BIN"
+          ls -1 "$PUB_BIN_POSIX"
+
+      # 用 flutter pub get 而不是 melos bootstrap：后者要自行判断
+      # 「这是不是 Flutter 工作区」，判断错就退回 dart pub get，
+      # pf_mobile 的 Flutter SDK 依赖会解析不到。
+      - name: 解析工作区依赖
+        run: flutter pub get
+
+      # 全包测试并产出 coverage/lcov.info。
+      # 覆盖率不设阈值门禁 —— 阈值只会催生「为凑数而写的断言」。
+      # 它的用途是 review 时看「这次改动碰的位置有没有测试」，由人判断。
+      - name: 运行单元测试（含覆盖率）
+        run: melos run test:cov
+
+      # ---------------------------------------------------------------------
+      # 证明 pf_mobile 的 widget 测试**确实执行了**，而不是被跳过
+      # ---------------------------------------------------------------------
+      # 为什么不能只看上一步的退出码：
+      #
+      #   `flutter test` 在下面三种情况下同样返回 0 ——
+      #     1. 用例全部执行并通过；
+      #     2. 一条用例都没有；
+      #     3. 用例全部被 @Skip / skip: true。
+      #
+      #   而 pf_mobile 的三条 widget 测试在**本机开发沙箱里跑不了**
+      #   （flutter_tester 子进程起不来，见 docs/M0_ACCEPTANCE.md 第 6 节第 9 项），
+      #   也就是说它们在本地始终处于「未验证」状态。
+      #   如果 CI 上也因为某种原因没跑，M0 会带着一个空洞的绿勾通过 ——
+      #   这正是本项目最想避免的失败模式：**覆盖静默归零而门禁全绿**。
+      #
+      # 因此这里把测试进程自己产出的 JSON 协议报告存下来，再用
+      # assert_test_report.dart 逐项核对：该跑的三条确实在「已执行」列表里，
+      # 且没有任何一条被跳过。报告本身也作为 artifact 上线，供人复核。
+      #
+      # 关于 --reporter json：它只往 stdout 写 JSON Lines，
+      # 人类可读的输出仍然来自上一步（compact reporter），两步互不干扰。
+      # ---------------------------------------------------------------------
+      - name: 运行移动端 widget 测试（JSON 协议报告）
+        if: always()
+        shell: bash
+        working-directory: apps/pf_mobile
+        run: |
+          mkdir -p ../../build/test-reports
+          flutter test --reporter json > ../../build/test-reports/pf_mobile.jsonl
+
+      - name: 断言 widget 测试确实执行（而非被跳过）
+        if: always()
+        shell: bash
+        run: |
+          dart run packages/pf_testkit/bin/assert_test_report.dart \
+            --report build/test-reports/pf_mobile.jsonl \
+            --label "pf_mobile · ${{ matrix.os }}" \
+            --min-executed 3 \
+            --require '应用能构建并显示构建信息' \
+            --require '深色模式下也能正常构建' \
+            --require 'MVP 阶段不得出现任何「记账」入口'
+
+      - name: 上传移动端测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-widget-report-${{ matrix.os }}-${{ github.sha }}
+          path: build/test-reports/pf_mobile.jsonl
+          # 报告不存在本身就是信息（说明测试步骤根本没跑起来），
+          # 因此这里用 warn 而不是 error：报错的是上一步，不要把根因盖掉。
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 上传覆盖率
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-${{ github.sha }}
+          path: "**/coverage/lcov.info"
+          if-no-files-found: warn
+          retention-days: 14
