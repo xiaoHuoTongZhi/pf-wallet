@@ -264,10 +264,10 @@ melos run ci:all         # = gate1 → gate2 → gate3
 | 6 | `melos run guards:logging` | `error=0` | ✅ error=0 |
 | 7 | `melos run guards:manifest` | `error=0` | ✅ error=0 warning=2 |
 | 8 | `melos run guards:version` | `error=0` | ✅ error=0 |
-| 9 | `melos run test` | 全包通过 | ⚠️ 纯 Dart 包全通过（pf_core 91 / pf_crypto 57 / pf_data 19 / pf_io 23 / pf_testkit 34 / guards 61）；`pf_mobile` 的 3 条 widget 测试需 `flutter test`，本机开发沙箱**阻断了 flutter_tester 子进程的启动**（`flutter test --verbose` 停在 artifacts 检查之后，无任何测试输出）。静态分析已覆盖其类型正确性，实际执行交给关卡 2 的三平台 CI |
+| 9 | `melos run test` | 全包通过 | ⚠️ 纯 Dart 包全通过（pf_core 91 / pf_crypto 57 / pf_data 19 / pf_io 23 / pf_testkit 34 / guards 61）；`pf_mobile` 的 3 条 widget 测试需 `flutter test`，本机开发沙箱**阻断了 flutter_tester 子进程的启动**（`flutter test --verbose` 停在 artifacts 检查之后，无任何测试输出）。静态分析已覆盖其类型正确性，实际执行交给关卡 2 的三平台 CI<br>**CI 补充（提交 `36206c6`）**：三个平台的第 9 步断言全绿 ⇒ 3 条 widget 测试在 macOS / Windows / Ubuntu 上均真实执行并通过 |
 | 10 | `melos run vectors` | `全部已实现向量通过`，失败 0、待实现 0 | ✅ 98 条通过，摘要 `f573cf9de746…` |
 | 11 | `melos run vectors:pending` | 与基线一致（M0 为空） | ✅ 无 pending |
-| 12 | `python3 tools/ci/compare_verdicts.py <三份报告>` | 三平台摘要一致 | ⏳ 需三平台 CI 产出（本机只能产出一份报告，比对工具会以退出码 2 拒绝少于两份的输入 —— 这是刻意的） |
+| 12 | `python3 tools/ci/compare_verdicts.py <三份报告>` | 三平台摘要一致 | ✅ 关卡 3 的 `跨平台判定一致性` 作业通过（提交 `36206c6`，4 个作业全绿）<br>本机仍只能产出一份报告 —— 比对工具会以退出码 2 拒绝少于两份的输入，这是刻意的：一份报告的「一致」没有意义 |
 
 ### 允许存在的 warning
 
@@ -284,43 +284,54 @@ warning **不失败**，但每次 review 都要看：
 ## 7. M0 完成的判定
 
 > **推进到 CI 的操作步骤、三关卡的预期行为、CI 特有失败的排查清单，
-> 以及本节三个未勾选项在全绿后怎么改 —— 见 `docs/M0_CI_RUNBOOK.md`。**
+> 以及本次判定所依据的运行记录 —— 见 `docs/M0_CI_RUNBOOK.md`。**
 > 本节只回答「算不算完成」，那本回答「怎么让它完成」。
+
+> **状态：M0 已完成（依据：提交 `36206c6` 的 CI 运行，8 个作业全部 `success`）。**
+> 下面是判定条目与证据。
 
 同时满足以下全部条件，M0 视为完成：
 
 - [x] 第 6 节 1–8、10、11 项全部符合期望（关卡 1 与关卡 3 的本地部分已全绿）
-- [ ] 第 6 节第 9 项：`pf_mobile` 的 3 条 widget 测试在能启动 `flutter_tester`
-      的环境上通过（**本机开发沙箱不具备该条件，由此处的 CI 代替执行**）
-      —— 第 1 次 CI 运行尚未证明，见下方 CI 记录
-- [ ] 第 6 节第 12 项在 CI 上跑通（需把仓库推到 GitHub 并产出三份报告）
-      —— 关卡 1、3 已达成；关卡 2 待重跑
-- [ ] 三关卡在 CI 上均为绿色
-      —— 关卡 1、3 绿；关卡 2 第 1 次运行在第 9 步红（已修，待重跑）
+- [x] 第 6 节第 9 项：`pf_mobile` 的 3 条 widget 测试在能启动 `flutter_tester`
+      的环境上通过 —— 由 CI 关卡 2 在**三个平台**上代跑并通过
+      （依据：第 2 次运行的第 9 步「断言 widget 测试确实执行」为 `success`，
+      该步骤只有在「执行并通过 ≥ 3 条」且「三个必需用例名全部出现」且
+      「无任何跳过」时才返回 0，因此它的绿即为证据，不是仅凭测试进程退出码）
+- [x] 第 6 节第 12 项在 CI 上跑通（三份报告均由对应作业产出并上传为 artifact）
+- [x] 三关卡在 CI 上均为绿色 —— 第 2 次运行 `36206c6`：8 个作业全部 `success`
 - [x] `test_vectors/pending_baseline.json` 与实现一致（M0：空）
 - [x] 本文件无「待补」标记
 
-### CI 运行记录（按时间追加，作为上面三项的证据）
+### CI 运行记录（按时间追加，作为上面各项的证据）
 
 | # | 提交 | 关卡 1 | 关卡 2 | 关卡 3 | 说明 |
 |---|---|---|---|---|---|
-| 1 | `a451c04` | ✅ 绿（15 步全过） | ❌ 第 9 步红 | ✅ 绿（含跨平台一致性） | 关卡 2 的失败见 `M0_CI_RUNBOOK.md` §3 P0-5：`flutter test` 未加 `--no-pub`，隐式 pub get 的 37 行文本混进 JSON 报告，断言工具以退出码 2 拒绝。已在同一提交后修复，待重跑 |
+| 1 | `a451c04` | ✅ 绿（15 步） | ❌ 第 9 步红 | ✅ 绿（4 作业） | 关卡 2 失败见 `M0_CI_RUNBOOK.md` §3 P0-5：`flutter test` 未加 `--no-pub`，隐式 pub get 的 37 行文本混进 JSON 报告，断言工具以退出码 2 拒绝。**这是设计生效的证据**：若只看测试进程退出码，第 8 步是绿的，M0 会带着「widget 测试从未真正执行」的空洞绿勾通过 |
+| 2 | `36206c6` | ✅ 绿（15 步） | ✅ 绿（3 平台 × 12 步） | ✅ 绿（4 作业） | 修复后 8 个作业全部 `success`；关卡 2 的三个平台均通过第 9 步断言 |
 
-第 1 次运行的 run id（可直接打开复核）：
+第 2 次运行（判定 M0 完成的依据）：
+
+- 关卡 1：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34957692314`
+- 关卡 2：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34957692352`
+- 关卡 3：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34957692332`
+
+第 1 次运行（保留作为反例）：
 
 - 关卡 1：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34956960094`
 - 关卡 2：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34956960006`
 - 关卡 3：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34956960108`
 
-> 记录这一条的意义不在于「失败过一次」，而在于它验证了一个设计判断：
-> 关卡 2 的那条断言**拦住了一个会让 M0 带着空洞绿勾通过的接线错误**。
-> 如果当时只看 `flutter test` 的退出码，第 8 步是绿的，M0 就会在
-> 「widget 测试从未真正执行」的状态下被判定完成 —— 这正是本文件
-> 第 6 节第 9 项要求「必须由能跑 flutter_tester 的环境执行」的原因。
+> 记录第 1 次失败的意义不在于「失败过一次」，而在于它验证了一个判断：
+> 那条断言拦住了一个会让 M0 带着空洞绿勾通过的接线错误。
+> 三条 widget 测试在**本机沙箱里从未被执行过**（`flutter_tester` 起不来），
+> 也就是说它们的「通过」只可能来自 CI —— 这正是第 6 节第 9 项
+> 必须由能跑 `flutter_tester` 的环境来判定的原因。
 
-上面未打勾的三项不是遗留工作，而是**必须由 CI（或在另一台机器上）执行的事**：
-本机是 Windows 单平台，跨平台一致性与 Flutter widget 测试在原理上就无法在本机闭环。
-把它们写成「已完成」等于自欺 —— 这正是本文件要求每项都给出可复现命令的原因。
+`docs/M0_CI_RUNBOOK.md` §5.2 记录了下一件事的时机：
+`smoke_test.dart` 第 3 条用例的反向断言（「MVP 阶段不得出现任何『记账』入口」）
+在 M1 引入记账功能时会必然变红，届时改写它**必须同步修改关卡 2 里
+`--require` 的第三个字面量** —— 改名绕过门禁必须是一次看得见的修改。
 
 ### 明确不在 M0 判定范围内的
 
