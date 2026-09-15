@@ -21,7 +21,21 @@ name: gate2-test
 on:
   push:
     branches: [main, master]
+    # 纯文档改动不触发本关卡（门禁策略，2026-09-15 加）。本关卡是 3 平台矩阵，
+    #   成本最高（macOS runner 按 10 倍计费），而 .md 变化不影响任何一条测试。
+    #   代价（明确接受）：若一次提交**只**动文档，本关卡不留下运行记录，
+    #   「这次提交被门禁验过」对它不成立。代码与文档混在同一提交时照常触发。
+    #   需要强制验证某次文档提交时，走 workflow_dispatch / 网页 Run workflow。
+    #   注意：`pull_request` 同样被过滤 —— 若日后开了分支保护并把本关卡设为必需检查，
+    #   纯文档 PR 会因「无检查项」而卡住，届时删掉下面 pull_request 段的过滤即可。
+    #   `**.md` 匹配任意层级（GitHub 的 `**` 可跨 `/`），故根目录 README.md 也覆盖。
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 concurrency:

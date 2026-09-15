@@ -308,13 +308,20 @@ warning **不失败**，但每次 review 都要看：
 | # | 提交 | 关卡 1 | 关卡 2 | 关卡 3 | 说明 |
 |---|---|---|---|---|---|
 | 1 | `a451c04` | ✅ 绿（15 步） | ❌ 第 9 步红 | ✅ 绿（4 作业） | 关卡 2 失败见 `M0_CI_RUNBOOK.md` §3 P0-5：`flutter test` 未加 `--no-pub`，隐式 pub get 的 37 行文本混进 JSON 报告，断言工具以退出码 2 拒绝。**这是设计生效的证据**：若只看测试进程退出码，第 8 步是绿的，M0 会带着「widget 测试从未真正执行」的空洞绿勾通过 |
-| 2 | `36206c6` | ✅ 绿（15 步） | ✅ 绿（3 平台 × 12 步） | ✅ 绿（4 作业） | 修复后 8 个作业全部 `success`；关卡 2 的三个平台均通过第 9 步断言 |
+| 2 | `36206c6` | ✅ 绿（15 步） | ✅ 绿（3 平台 × 11 步） | ✅ 绿（4 作业） | 修复后 8 个作业全部 `success`；关卡 2 的三个平台均通过第 9 步断言 |
+| 3 | `b0de874` | ✅ 绿 | ✅ 绿 | ✅ 绿 | 本文件的收尾提交（仅文档变更）触发的第三次运行，8 个作业同样全部 `success` —— 记录在此是因为它验证了「收尾提交本身没有引入回归」 |
 
 第 2 次运行（判定 M0 完成的依据）：
 
 - 关卡 1：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34957692314`
 - 关卡 2：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34957692352`
 - 关卡 3：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34957692332`
+
+第 3 次运行（收尾提交 `b0de874`，仅文档变更）：
+
+- 关卡 1：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34958499329`
+- 关卡 2：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34958499257`
+- 关卡 3：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/34958499327`
 
 第 1 次运行（保留作为反例）：
 

@@ -45,6 +45,10 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 | `docs/M0_CI_RUNBOOK.md` | 首次 `git add -A` 后补：§1.2 增加 shell 前提说明框 + PowerShell 版检查 + 行尾检查（④）；§3 开头声明其命令需在 Git Bash 执行 |
 | `packages/pf_crypto/test/container_format_test.dart`<br>`packages/pf_crypto/test/params_test.dart` | **仅行尾** CRLF → LF（389 / 238 处）。`.gitattributes` 已保证索引存 LF，但工作区残留 CRLF 会让 `git status` 反复显示「已修改」而 diff 为空，并使按行读源码的门禁在 CRLF 下行为不同。内容零改动（转后 md5 与索引逐字节一致） |
 
+> **上表之后的追加改动（2026-09-15，M0 判定完成之后）**：三份 workflow 的
+> `push` / `pull_request` 增加了 `paths-ignore`，纯文档提交不再触发 CI。
+> 动机、代价与将来的坑见 **§1.6**。
+
 ### 0.3 本机复检结果（改动后）
 
 ```
@@ -263,6 +267,37 @@ gh run watch
 
 M0 首推的实测结果印证了这个分层：关卡 1 一次绿、关卡 3 四个作业一次绿，
 唯一的失败落在关卡 2 的第 9 步（见 §3 P0-5）。
+
+### 1.6 文档提交不触发 CI（`paths-ignore`，2026-09-15 起生效）
+
+三份 workflow 的 `push` 与 `pull_request` 都加了：
+
+```yaml
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+```
+
+**改它的原因**：M0 收尾时发现「只改一个文档里的错字」也要跑满 3 平台矩阵
+（含 macOS，按 10 倍计费）。而门禁读的是代码、向量与 workflow 自身，
+`.md` 的变化不可能让任何一项检查的结论改变 —— 这份成本买到的是零信息。
+
+**明确接受的代价**（写在这里，避免以后有人把它当成 bug）：
+
+| 场景 | 行为 | 后果 |
+|---|---|---|
+| 一次提交**只**动 `docs/**` 或 `*.md` | 三关卡均不运行 | 该提交没有门禁记录。**「这次提交被验过」对它是假命题** |
+| 代码 + 文档混在同一提交 | 照常触发 | 无影响 —— 有代码文件变化就不匹配 `paths-ignore` |
+| 需要强制验证某次纯文档提交 | `workflow_dispatch` / 网页 Run workflow | 手动补跑，不受路径过滤影响 |
+
+**别忘了这一点**：`workflow_dispatch` 是逃生口，所以「跳过」永远是可逆的。
+反过来说，**不要**用「文档提交不会跑 CI」当作省略本地自检的理由 ——
+`dart format --set-exit-if-changed` 与 `dart analyze` 在本机是秒级的，仍然照跑。
+
+**一个已知的未来坑**：过滤器同时作用在 `pull_request` 上。若日后开了分支保护
+并把三关卡设为**必需检查**，纯文档 PR 会因为「没有检查项」而永远等不到
+required check 通过。届时把 `pull_request` 段下的 `paths-ignore` 删掉即可
+（`push` 段的保留）—— 那一刻起，正确性优先于成本。
 
 ---
 
