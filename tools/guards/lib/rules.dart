@@ -270,6 +270,60 @@ final class ManifestRules {
 }
 
 // ---------------------------------------------------------------------------
+// tracked_paths.yaml
+// ---------------------------------------------------------------------------
+
+/// 一条入库路径禁止规则。
+final class TrackedPathRule {
+  TrackedPathRule({
+    required this.id,
+    required this.severity,
+    required this.patterns,
+    required this.rationale,
+  });
+
+  final String id;
+  final Severity severity;
+  final PathMatcher patterns;
+  final String rationale;
+
+  bool matches(String relativePath) => patterns.matches(relativePath);
+
+  /// 命中的模式（用于报告里说明是哪一条）。
+  String? matchedPattern(String relativePath) => patterns.matchedPattern(relativePath);
+}
+
+final class TrackedPathRules {
+  TrackedPathRules({
+    required this.sourcePath,
+    required this.deny,
+    required this.allow,
+    required this.unknownPathSeverity,
+    required this.caseCollisionSeverity,
+    required this.maxFindingsPerRule,
+  });
+
+  final String sourcePath;
+  final List<TrackedPathRule> deny;
+  final PathMatcher allow;
+  final Severity unknownPathSeverity;
+  final Severity caseCollisionSeverity;
+
+  /// 同一规则最多逐条列出多少条命中（<= 0 表示不截断）。
+  final int maxFindingsPerRule;
+
+  /// 按规则文件里的顺序返回第一条命中的禁止规则，未命中返回 null。
+  ///
+  /// 顺序即优先级：一条路径只归属一条规则，避免「一个文件报两条错」。
+  TrackedPathRule? firstMatch(String relativePath) {
+    for (final rule in deny) {
+      if (rule.matches(relativePath)) return rule;
+    }
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 载入器
 // ---------------------------------------------------------------------------
 
@@ -471,6 +525,66 @@ final class RuleSet {
               ? Severity.info
               : Severity.parse(optionalString(hint, 'severity', path: '$path.hint') ?? 'info'),
       hintMessage: hint == null ? '' : (optionalString(hint, 'message', path: '$path.hint') ?? ''),
+    );
+  }
+
+  TrackedPathRules loadTrackedPathRules() {
+    final path = _path('tracked_paths.yaml');
+    final json = repo.loadYamlMap(path);
+    final rawRules = json['deny'];
+    if (rawRules == null) {
+      throw GuardException('$path.deny 缺失', hint: '至少要有 deny 段；没有禁止项的白名单检查没有意义');
+    }
+    if (rawRules is! List) {
+      throw GuardException('$path.deny 必须是列表');
+    }
+
+    final rules = <TrackedPathRule>[];
+    final seenIds = <String>{};
+    for (var i = 0; i < rawRules.length; i++) {
+      final item = rawRules[i];
+      final rulePath = '$path.deny[$i]';
+      if (item is! Map) {
+        throw GuardException('$rulePath 必须是映射');
+      }
+      final map = item.cast<String, Object?>();
+      final id = requireString(map, 'id', path: rulePath);
+      if (!seenIds.add(id)) {
+        throw GuardException('$rulePath.id 重复: "$id"', hint: 'id 会直接出现在 CI 日志与报告里，必须唯一');
+      }
+      final patterns = stringList(map, 'patterns', path: rulePath);
+      if (patterns.isEmpty) {
+        throw GuardException('$rulePath.patterns 不能为空');
+      }
+      rules.add(
+        TrackedPathRule(
+          id: id,
+          severity: Severity.parse(requireString(map, 'severity', path: rulePath)),
+          patterns: PathMatcher(patterns),
+          rationale: optionalString(map, 'rationale', path: rulePath) ?? '',
+        ),
+      );
+    }
+
+    final allow = stringList(json, 'allow', path: path);
+    if (allow.isEmpty) {
+      throw GuardException(
+        '$path.allow 不能为空',
+        hint: '空白名单会让每一条入库路径都变成 tracked-unexpected —— 那是把检查变成噪音，不是收紧',
+      );
+    }
+
+    return TrackedPathRules(
+      sourcePath: path,
+      deny: List<TrackedPathRule>.unmodifiable(rules),
+      allow: PathMatcher(allow),
+      unknownPathSeverity: Severity.parse(
+        optionalString(json, 'unknownPathSeverity', path: path) ?? 'error',
+      ),
+      caseCollisionSeverity: Severity.parse(
+        optionalString(json, 'caseCollisionSeverity', path: path) ?? 'error',
+      ),
+      maxFindingsPerRule: optionalInt(json, 'maxFindingsPerRule', path: path, fallback: 20),
     );
   }
 

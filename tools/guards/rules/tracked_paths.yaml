@@ -1,0 +1,229 @@
+# =============================================================================
+# 入库路径检查（tracked paths）规则
+# =============================================================================
+# 这条检查回答的问题，与其余所有门禁都不同：
+#
+#   它们查的是「代码内容对不对」（依赖、API、日志、清单、版本号），
+#   这一条查的是「**哪些路径被提交了**」。
+#
+# 起因是一次真实事故：M1 第一步的提交 3ebe837 里混进了
+# `apps/pf_mobile/.flutter_tool_state`（内容 `{"is-bot": false}`，
+# 是 flutter_tools 在本机跑过一次命令后写的运行时状态）。
+# 当时三关卡全绿 —— 因为**没有任何一关在回答这个问题**：
+#   · 它不是依赖（deps 不关心）
+#   · 不是源码文本（banned-api / logging 只扫 .dart）
+#   · 不是清单（manifest 只看 AndroidManifest / Info.plist）
+#   · 不是版本号
+# 于是它一路绿灯进了仓库，直到人工 `git show --stat` 才发现。
+#
+# 因此本检查读 **git 索引**（`git ls-files --cached`）而不是工作区文件树。
+# 这个选择是整个检查的关键，理由有三：
+#   1. 工作区里躺着的东西成千上万（构建产物、缓存、临时文件），
+#      绝大多数本来就不会入库 —— 扫它们只会产生噪音。
+#   2. **索引才是「将被提交的东西」的定义**。`git add` 之后、
+#      commit 之前，答案就已经确定；等到 CI 上再扫工作区，
+#      那道 checkout 里没有本地临时文件，反而什么都发现不了。
+#   3. 它与 .gitignore 是**互补而非重复**：.gitignore 是「别自动加进来」，
+#      本检查是「已经加进来了」。`.flutter_tool_state` 那次正是
+#      因为 .gitignore 里没有这条规则才漏过去 —— 而一旦有人
+#      `git add -f`，或某条规则被误删，.gitignore 就完全不设防了。
+#
+# ## 判定分三层，优先级从高到低
+#
+#   1. `deny`   —— 命中即 error。这些路径无论出现在哪里都不该入库。
+#                  刻意**不提供豁免名单**：一个「可以逐条放行的 deny」
+#                  很快就会变成绕过门禁的常规通道。真需要放行时，
+#                  应当改模式或改文件名 —— 那个动作会出现在 diff 里。
+#   2. `collisions` —— 全路径大小写折叠后相同的一对（如 `docs/A.md`
+#                  与 `docs/a.md`）。在 Linux 上能提交，在 macOS 上
+#                  checkout 会互相覆盖，在 Windows 上直接无法检出一个
+#                  可用的工作区。本仓是三平台 CI，这类路径必须拦住。
+#   3. `allow`  —— 白名单。**未被 deny 命中且不在 allow 内**的路径会
+#                  按 `unknownPathSeverity` 报告（默认 error）。
+#                  这条的用意不是「防陌生人」，而是让「仓库里新出现
+#                  一整块区域」变成一次**看得见的决定**：新目录要么
+#                  被登记进 allow，要么说明它不该入库。
+# =============================================================================
+
+version: 1
+
+# 白名单外的路径如何报告。
+#   error   —— 默认。新增目录必须登记（会出现在 diff 里，可 review）。
+#   warning —— 想先观察一段时间再收紧时改成这个，但**不要删掉本检查**。
+unknownPathSeverity: error
+
+# 大小写折叠后重名的路径如何报告。
+caseCollisionSeverity: error
+
+# 同一规则最多逐条列出多少条命中（超出部分汇总成一条）。
+# 目的是防止「一次误提交 5000 个构建产物」把 CI 日志冲成一屏噪音 ——
+# 但汇总条依然让检查失败，所以不会因为截断而变成静默通过。
+maxFindingsPerRule: 20
+
+# -----------------------------------------------------------------------------
+# deny —— 命中即 error，不做例外
+# -----------------------------------------------------------------------------
+deny:
+  # ---- 构建输出 ----
+  - id: tracked-build-output
+    severity: error
+    # 每条规则下的模式都写成 `**/...` 形式：`**/` 能匹配**零层**目录，
+    # 因此 `**/build/**` 同时覆盖根下的 `build/` 与 `apps/pf_mobile/build/`，
+    # 不需要（也不应该）为根目录再写一条。
+    patterns:
+      - "**/.dart_tool/**"
+      - "**/build/**"
+      - "**/coverage/**"
+      - "**/DerivedData/**"
+      - "**/Pods/**"
+      - "**/ephemeral/**"
+      - "**/node_modules/**"
+      - "**/.plugin_symlinks/**"
+      - "**/.symlinks/**"
+      - "**/obj/**"
+      - "**/*.dill"
+      - "**/*.snapshot"
+    rationale: >-
+      构建输出可以由源码完全重建，入库只会带来三件事：仓库体积膨胀、
+      merge 冲突无法人工解决、以及「CI 绿了但产物是旧的」这类无从排查的怪象。
+      注意 `**/build/**` 也会拦住 `docs/build/` 之类的路径 —— 这是有意的，
+      目录名 `build` 在本仓只有一种含义。
+
+  # ---- 本地运行时状态 ----
+  - id: tracked-local-state
+    severity: error
+    patterns:
+      - "**/.flutter_tool_state"
+      - "**/*_state"
+      - "**/.flutter-plugins"
+      - "**/.flutter-plugins-dependencies"
+      - "**/local.properties"
+      - "**/key.properties"
+      - "**/*.iml"
+      - "**/.idea/**"
+      - "**/.vscode/**"
+    rationale: >-
+      这类文件记录的是「某一台机器上某一次运行」的状态，换台机器就没有意义，
+      却常常包含绝对路径（有时还包含用户名）。`**/*_state` 只匹配以 `_state`
+      结尾的**整个文件名**，所以 `lib/app_state.dart` 不受影响 ——
+      这条规则的靶子是 `.flutter_tool_state` 那一类无扩展名的状态文件。
+      `.idea/` / `.vscode/` 也在此列：共享配置请写进 `.editorconfig`，
+      那是跨编辑器且不含绝对路径的等价物。
+
+  # ---- 数据与密钥 ----
+  - id: tracked-database
+    severity: error
+    patterns:
+      - "**/*.db"
+      - "**/*.db-wal"
+      - "**/*.db-shm"
+      - "**/*.sqlite"
+      - "**/*.sqlite3"
+      - "**/*.sqlcipher"
+    rationale: >-
+      本应用的数据库是加密的，但加密库一旦入库就等于把爆破材料（连同
+      弱口令用户的数据）一起发布出去。测试用数据库请**在测试里现场生成**，
+      不要作为夹具提交。
+
+  - id: tracked-vault-file
+    severity: error
+    patterns:
+      - "**/*.pfb"
+      - "**/*.pfk"
+    rationale: >-
+      `.pfb` 是本应用的加密容器（备份包），`.pfk` 是配套密钥。
+      它们是**用户数据**，不是源码 —— 提交任何一个都意味着把某个人的
+      真实账目放进了公开仓库。这也覆盖了 `test_vectors/`：
+      黄金向量只允许放**明文输入 + 期望输出**，不允许放容器文件本身。
+
+  - id: tracked-secret-material
+    severity: error
+    patterns:
+      - "**/*.key"
+      - "**/*.pem"
+      - "**/*.p12"
+      - "**/*.jks"
+      - "**/*.keystore"
+    rationale: >-
+      签名密钥与证书私钥。它们一旦进了 git 历史就**无法通过删除挽回**
+      （历史里的副本还在），只能换密钥。安卓签名密钥请放在
+      CI secret / 本机 keychain，不要放在仓库里。
+
+  - id: tracked-installer-artifact
+    severity: error
+    patterns:
+      - "**/*.apk"
+      - "**/*.aab"
+      - "**/*.ipa"
+    rationale: >-
+      安装包由 CI 构建并作为 artifact 上传，不入库。入库会让每次版本
+      更新的 diff 变成二进制垃圾，且无法 review 里面到底打包了什么。
+
+  - id: tracked-log-file
+    severity: error
+    patterns:
+      - "**/*.log"
+    rationale: >-
+      日志文件里可能含真实数据（本项目的日志脱敏门禁正是为此而设），
+      且体量会随时间无限增长。真需要日志夹具时，请把内容直接写在
+      测试源码的字符串里，或改名为 `.log.txt` 并**同时修改本规则** ——
+      后者的摩擦是有意的。
+
+# -----------------------------------------------------------------------------
+# allow —— 白名单
+# -----------------------------------------------------------------------------
+# 只登记「区域」而不是逐个文件：`packages/*/lib/**` 这样写，
+# 新增一个源文件不需要动本文件；而新增**一整个目录**需要。
+# 这正是想要的颗粒度 —— 加文件是日常，加区域是决定。
+allow:
+  # ---- 仓库根：逐条列举 ----
+  # 根目录刻意不写 `*`：根目录是仓库的门面，多出任何一个文件都应该被看见。
+  - .editorconfig
+  - .flutter-version
+  - .gitattributes
+  - .gitignore
+  - .metadata # flutter create 生成的项目元数据，Flutter 惯例入库
+  - CHANGELOG.md
+  - LICENSE
+  - README.md
+  - analysis_options.yaml
+  - melos.yaml
+  - pubspec.lock
+  - pubspec.yaml
+
+  # ---- 应用 ----
+  - apps/*/pubspec.yaml
+  - apps/*/analysis_options.yaml
+  - apps/*/README.md
+  - apps/*/lib/**
+  - apps/*/test/**
+  - apps/*/integration_test/**
+  - apps/*/assets/**
+  - apps/*/l10n/**
+  # 只登记 android / ios。本项目是移动端应用，新增平台不只是「多一个目录」——
+  # 它会多出一份需要单独审计的隐私清单（见 manifest.yaml），
+  # 所以刻意要求在这里显式登记一次。
+  - apps/*/android/**
+  - apps/*/ios/**
+
+  # ---- 库包 ----
+  - packages/*/pubspec.yaml
+  - packages/*/analysis_options.yaml
+  - packages/*/README.md
+  - packages/*/CHANGELOG.md
+  - packages/*/lib/**
+  - packages/*/bin/**
+  - packages/*/test/**
+
+  # ---- 工具与守卫 ----
+  - tools/*/pubspec.yaml
+  - tools/*/lib/**
+  - tools/*/bin/**
+  - tools/*/test/**
+  - tools/*/rules/**
+  - tools/ci/**
+
+  # ---- 受控的仓库级目录 ----
+  - .github/**
+  - docs/**
+  - test_vectors/**

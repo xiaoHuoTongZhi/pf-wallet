@@ -4,12 +4,13 @@
 ///   dart run tools/guards/bin/guards.dart `<check>` [选项]
 ///
 /// check 取值：
-///   deps        依赖黑名单（含传递依赖）与来源审计
-///   banned-api  禁用 API 扫描
-///   logging     日志敏感信息扫描
-///   manifest    平台隐私清单校验
-///   version     版本号一致性（version.dart ↔ 各 pubspec）
-///   all         依次执行以上全部
+///   deps           依赖黑名单（含传递依赖）与来源审计
+///   banned-api     禁用 API 扫描
+///   logging        日志敏感信息扫描
+///   manifest       平台隐私清单校验
+///   version        版本号一致性（version.dart ↔ 各 pubspec）
+///   tracked-paths  入库路径检查（读 git 索引：禁止入库的文件、大小写冲突、白名单外的路径）
+///   all            依次执行以上全部
 ///
 /// 退出码：
 ///   0 通过
@@ -26,6 +27,7 @@ import 'package:args/args.dart';
 import 'package:pf_guards/checks/deps.dart';
 import 'package:pf_guards/checks/manifest.dart';
 import 'package:pf_guards/checks/source_checks.dart';
+import 'package:pf_guards/checks/tracked_paths.dart';
 import 'package:pf_guards/checks/version.dart';
 import 'package:pf_guards/model.dart';
 import 'package:pf_guards/repo.dart';
@@ -45,6 +47,7 @@ const List<String> availableChecks = <String>[
   'logging',
   'manifest',
   'version',
+  'tracked-paths',
 ];
 
 void main(List<String> arguments) {
@@ -139,6 +142,8 @@ GuardReport _runSingle(String target, Repo repo, RuleSet ruleSet) {
       return runManifestCheck(repo: repo, rules: ruleSet.loadManifestRules());
     case 'version':
       return runVersionCheck(repo: repo);
+    case 'tracked-paths':
+      return runTrackedPathsCheck(repo: repo, rules: ruleSet.loadTrackedPathRules());
     default:
       throw GuardException('未实现的检查项: $target');
   }
@@ -185,12 +190,13 @@ void _printUsage(ArgParser parser) {
     ..writeln('用法: dart run tools/guards/bin/guards.dart <check> [选项]')
     ..writeln()
     ..writeln('check:')
-    ..writeln('  deps        依赖黑名单（含传递依赖）与来源审计')
-    ..writeln('  banned-api  禁用 API 扫描（动态执行 / 网络客户端 / 弱随机 / 弱哈希 …）')
-    ..writeln('  logging     日志敏感信息扫描')
-    ..writeln('  manifest    Android / iOS 平台隐私清单校验')
-    ..writeln('  version     版本号一致性（version.dart ↔ 各 pubspec）')
-    ..writeln('  all         依次执行以上全部')
+    ..writeln('  deps           依赖黑名单（含传递依赖）与来源审计')
+    ..writeln('  banned-api     禁用 API 扫描（动态执行 / 网络客户端 / 弱随机 / 弱哈希 …）')
+    ..writeln('  logging        日志敏感信息扫描')
+    ..writeln('  manifest       Android / iOS 平台隐私清单校验')
+    ..writeln('  version        版本号一致性（version.dart ↔ 各 pubspec）')
+    ..writeln('  tracked-paths  入库路径检查（读 git 索引：禁止入库的文件 / 大小写冲突 / 白名单外路径）')
+    ..writeln('  all            依次执行以上全部')
     ..writeln()
     ..writeln('选项:')
     ..writeln(parser.usage)

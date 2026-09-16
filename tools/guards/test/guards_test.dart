@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:pf_guards/checks/deps.dart';
 import 'package:pf_guards/checks/manifest.dart';
 import 'package:pf_guards/checks/source_checks.dart';
+import 'package:pf_guards/checks/tracked_paths.dart';
 import 'package:pf_guards/model.dart';
 import 'package:pf_guards/repo.dart';
 import 'package:pf_guards/rules.dart';
@@ -23,6 +24,7 @@ const List<String> _ruleFiles = <String>[
   'deps_allowlist.yaml',
   'logging.yaml',
   'manifest.yaml',
+  'tracked_paths.yaml',
 ];
 
 /// 固定时间，保证与真实日期无关（allowlist 的 reviewBy 默认是 2027-03-15）。
@@ -113,6 +115,7 @@ void main() {
       expect(() => ruleSet.loadBannedApiRules(), returnsNormally);
       expect(() => ruleSet.loadLoggingRules(), returnsNormally);
       expect(() => ruleSet.loadManifestRules(), returnsNormally);
+      expect(() => ruleSet.loadTrackedPathRules(), returnsNormally);
     });
 
     test('依赖黑名单覆盖了常见遥测与后端 SDK', () {
@@ -475,6 +478,43 @@ void main() {
       final report = runManifestCheck(repo: repo, rules: ruleSet.loadManifestRules());
       final androidFindings = report.findings.where((f) => f.ruleId.startsWith('manifest-android'));
       expect(androidFindings, isEmpty, reason: report.render());
+    });
+  });
+
+  group('tracked-paths 检查', () {
+    test('白名单外的路径被拦下（用真实规则）', () {
+      final report = runTrackedPathsCheck(
+        repo: repo,
+        rules: ruleSet.loadTrackedPathRules(),
+        trackedPaths: <String>['apps/pf_mobile/.flutter_tool_state', 'scripts/publish.sh'],
+      );
+      expect(report.ok, isFalse);
+      expect(report.findings.map((f) => f.ruleId).toSet(), <String>{
+        'tracked-local-state',
+        'tracked-unexpected',
+      });
+    });
+
+    test('全部路径都在白名单内 → 通过', () {
+      final report = runTrackedPathsCheck(
+        repo: repo,
+        rules: ruleSet.loadTrackedPathRules(),
+        trackedPaths: <String>[
+          'apps/pf_mobile/lib/main.dart',
+          'packages/pf_core/lib/src/ulid.dart',
+          'docs/M0_ACCEPTANCE.md',
+          'test_vectors/v1/money.json',
+          'tools/guards/rules/tracked_paths.yaml',
+        ],
+      );
+      expect(report.errorCount, 0, reason: report.render());
+    });
+
+    test('没有 git 索引可读时抛 GuardException（退出码 2，而不是「检查失败」）', () {
+      // 夹具目录不是 git 仓库 ⇒ 必须走「基础设施故障」这条路。
+      // 这一条把 0/1/2 的语义钉住：读不到索引时退 1 会让人去改业务代码，
+      // 而真正该做的是把环境修好。
+      expect(() => repo.trackedFiles(), throwsA(isA<GuardException>()));
     });
   });
 }

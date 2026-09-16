@@ -92,12 +92,12 @@ pf-wallet/
 
 ### 关卡 1 · 静态门禁 —— 只在一台机器上跑
 
-**为什么只跑 ubuntu**：这一关校验的是「源码文本」是否合规（格式、lint、依赖声明、
-禁用 API、日志脱敏、平台清单、版本号）。这些都是平台无关的判断，
+**为什么只跑 ubuntu**：这一关校验的是「源码文本」与「入库路径」是否合规（格式、lint、
+依赖声明、禁用 API、日志脱敏、平台清单、版本号、被提交的路径）。这些都是平台无关的判断，
 在三台机器上重复跑只会把 CI 时间乘以 3，不会多发现一个 bug。
 
 ```bash
-melos run ci:gate1      # = format → analyze → guards（5 项）
+melos run ci:gate1      # = format → analyze → guards（6 项）
 ```
 
 | 步骤 | 命令 | 失败意味着 |
@@ -109,6 +109,7 @@ melos run ci:gate1      # = format → analyze → guards（5 项）
 | 日志脱敏 | `guards logging` | 敏感值（密钥、主密码、金额）被写进日志或异常消息 |
 | 平台清单 | `guards manifest` | Android `allowBackup` 未关、权限超集、iOS 备份排除缺失 |
 | 版本一致性 | `guards version` | `PfBuildInfo.appVersion` 与各 `pubspec.yaml` 的 `version` 不一致 |
+| 入库路径 | `guards tracked-paths` | **被提交的路径**里有禁止入库的文件（构建产物 / 本地状态 / 数据库 / 密钥 / 安装包 / 日志）、大小写折叠后重名的路径，或不在白名单内的新区域。它是唯一一条读 `git ls-files --cached` 的检查 —— 其余七条查的都是「内容」，只有它查「哪些路径进来了」（3ebe837 混进 `.flutter_tool_state` 时三关卡全绿，原因就是缺这一条） |
 
 ### 关卡 2 · 测试门禁 —— 三个平台都跑
 
@@ -268,6 +269,7 @@ melos run ci:all         # = gate1 → gate2 → gate3
 | 10 | `melos run vectors` | `全部已实现向量通过`，失败 0、待实现 0 | ✅ 98 条通过，摘要 `f573cf9de746…` |
 | 11 | `melos run vectors:pending` | 与基线一致（M0 为空） | ✅ 无 pending |
 | 12 | `python3 tools/ci/compare_verdicts.py <三份报告>` | 三平台摘要一致 | ✅ 关卡 3 的 `跨平台判定一致性` 作业通过（提交 `36206c6`，4 个作业全绿）<br>本机仍只能产出一份报告 —— 比对工具会以退出码 2 拒绝少于两份的输入，这是刻意的：一份报告的「一致」没有意义 |
+| 13 | `melos run guards:tracked-paths` | `error=0` | 🆕 **M1 期间补入的门禁**（不是 M0 的交付物）。本机实测：`trackedFiles=115 deniedPaths=0 caseCollisions=0 unexpectedPaths=0` → PASS。反例已验证：把 `.flutter_tool_state`、`build/…/ledger.db`、`scripts/publish.sh` 依次 `git add` 进索引，三条规则各自命中、退出码 1（详见 `M0_CI_RUNBOOK.md` §3 的「P1 · 入库路径检查」） |
 
 ### 允许存在的 warning
 
@@ -278,6 +280,11 @@ warning **不失败**，但每次 review 都要看：
   它们的存在是**故意的** —— 让后来者知道这个包已经被想过一次，不必重新捡起来。
 - `guards:manifest` 的 warning：尚未创建的平台配置（iOS 的 `PrivacyInfo.xcprivacy`
   在 M0 还没有对应文件）。
+
+> **上表里的文件数与用例数是 M0 当时的实测值，不是判定线。**
+> 第 2 行的判定线是「`0 changed`」，第 9 行的判定线是「全部通过」——
+> 新增文件后它们是 79 files / guards 80 项，依旧满足。
+> 会变的数字写死进文档只会制造「文档错了」的错觉，所以改口径、不改结论。
 
 ---
 

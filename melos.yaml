@@ -108,11 +108,11 @@ scripts:
   #   `&&` 链由 shell 自己负责短路：失败立刻中止，且退出码非零。
   #   Linux / macOS 上两种写法行为一致，因此统一用 `&&`，不留平台分叉。
   guards:
-    description: 全部自定义门禁（依赖黑名单 / 禁用 API / 日志脱敏 / 平台清单）
+    description: 全部自定义门禁（依赖黑名单 / 禁用 API / 日志脱敏 / 平台清单 / 版本号 / 入库路径）
     run: >-
       melos run guards:deps && melos run guards:banned-api &&
       melos run guards:logging && melos run guards:manifest &&
-      melos run guards:version
+      melos run guards:version && melos run guards:tracked-paths
 
   guards:deps:
     description: 依赖黑名单（含传递依赖）与来源审计
@@ -133,6 +133,14 @@ scripts:
   guards:version:
     description: 版本号一致性（PfBuildInfo.appVersion ↔ 各 pubspec 的 version）
     run: dart run tools/guards/bin/guards.dart version
+
+  # 这一条查的不是「代码内容」而是「哪些路径被提交了」—— M1 第一步那次
+  # 事故（3ebe837 混进 .flutter_tool_state）证明了前面几条都管不到它。
+  # 它读 git 索引（git ls-files --cached），因此**必须在一个 git 仓库里跑**；
+  # 没有 git 时它会以退出码 2 失败（基础设施故障），而不是静默通过。
+  guards:tracked-paths:
+    description: 入库路径检查（禁止入库的文件 / 大小写冲突 / 白名单外的路径）
+    run: dart run tools/guards/bin/guards.dart tracked-paths
 
   # ---------- CI 三关卡聚合（本地复现 CI，见 docs/M0_ACCEPTANCE.md）----------
   #

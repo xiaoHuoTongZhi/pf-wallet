@@ -117,6 +117,16 @@ int requireInt(Map<String, Object?> source, String key, {required String path}) 
   return value;
 }
 
+/// 读取可选整数，缺失时返回 [fallback]。
+int optionalInt(Map<String, Object?> source, String key, {required String path, int fallback = 0}) {
+  final value = source[key];
+  if (value == null) return fallback;
+  if (value is! int) {
+    throw GuardException('$path.$key 必须是整数，实际是 ${value.runtimeType}');
+  }
+  return value;
+}
+
 /// 读取可选布尔，缺失时用 [fallback]。
 bool optionalBool(
   Map<String, Object?> source,

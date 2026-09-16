@@ -1,6 +1,7 @@
 /// 仓库定位与文件遍历。
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -87,6 +88,60 @@ final class Repo {
       if (skippedDirectories.contains(segments[i])) return true;
     }
     return false;
+  }
+
+  /// 枚举 git 索引中的全部路径（等价于 `git ls-files --cached`）。
+  ///
+  /// 返回相对仓库根的 POSIX 路径（已排序、已去重）。
+  ///
+  /// 两个参数都不是随手加的：
+  ///   · `-z` 让 git 用 NUL 分隔输出，**同时关闭 `core.quotepath` 的路径转义**。
+  ///     不加它，含中文或空格的文件名会被输出成 `"\350\257\264..."` 这种转义序列，
+  ///     规则里的 glob 一条都匹配不上 —— 而那会表现成「检查通过」。
+  ///   · `--cached` 明确读索引（而不是工作区）。这就是本方法的语义：
+  ///     「哪些路径将被提交」，而不是「磁盘上有什么文件」。
+  ///
+  /// 任何失败都抛 [GuardException]（退出码 2）：读不到索引是基础设施故障，
+  /// 不能与「代码有问题」（退出码 1）混为一谈。
+  List<String> trackedFiles() {
+    final ProcessResult result;
+    try {
+      result = Process.runSync(
+        'git',
+        <String>['-C', root, 'ls-files', '--cached', '-z'],
+        stdoutEncoding: const Utf8Codec(allowMalformed: true),
+        stderrEncoding: const Utf8Codec(allowMalformed: true),
+      );
+    } on ProcessException {
+      throw GuardException(
+        '无法执行 git —— 它不在 PATH 中，或本机没有安装。',
+        hint:
+            '本检查读的是 git 索引，没有 git 就无法判定。'
+            '若这是在一个没有 .git 的源码快照里运行，请跳过本项（CI 必须保留它）。',
+      );
+    }
+
+    if (result.exitCode != 0) {
+      final message = result.stderr.toString().trim();
+      throw GuardException(
+        'git ls-files 失败（退出码 ${result.exitCode}）：$message',
+        hint:
+            message.contains('dubious ownership')
+                ? 'git 认为仓库属主与当前用户不一致（常见于挂载盘 / 容器）。'
+                    '按提示执行 `git config --global --add safe.directory $root` 后重试。'
+                : '若提示不是 git 仓库，说明 $root 下没有 .git —— 本检查无法在该环境完成判定。',
+      );
+    }
+
+    final raw = result.stdout.toString();
+    final paths = raw
+      .split('\u0000')
+      .map((entry) => entry.trim())
+      .where((entry) => entry.isNotEmpty)
+      .map((entry) => entry.replaceAll(r'\', '/'))
+      .toList(growable: false)..sort();
+
+    return List<String>.unmodifiable(paths);
   }
 
   /// 读取文件（UTF-8），不存在时抛 [GuardException]。

@@ -49,17 +49,30 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 > `push` / `pull_request` 增加了 `paths-ignore`，纯文档提交不再触发 CI。
 > 动机、代价与将来的坑见 **§1.6**；连推两次会让前一次的运行变 `cancelled`
 > 这条容易误判的行为见 **§1.7**。
+>
+> **M1 期间追加（2026-09-16）**：新增第四条门禁 **入库路径检查**
+> （`tools/guards/lib/checks/tracked_paths.dart` +
+> `tools/guards/rules/tracked_paths.yaml` + 测试，并给 gate1 加了一个步骤），
+> 补上「没有任何一关在回答『哪些路径被提交了』」这个盲区。
+> 规则、白名单与失败时怎么分诊见 **§3 的「P1 · 入库路径检查」**；
+> 关卡 1 的步骤表见 **§2.1**。
 
 ### 0.3 本机复检结果（改动后）
 
 ```
-format     Formatted 76 files (0 changed)
-analyze    No issues found!            （--fatal-infos --fatal-warnings）
-guards     5 项检查，error=0 warning=13（deps 11 / manifest 2，均为刻意保留）
-test       305 项：pf_core 91 / pf_crypto 57 / pf_data 19 / pf_io 23 / pf_testkit 54 / guards 61
+format     Formatted 79 files (0 changed)        ← M0 当时 76；判定线是 0 changed
+analyze    No issues found!                      （--fatal-infos --fatal-warnings）
+guards     6 项检查，error=0 warning=13          （deps 11 / manifest 2，均为刻意保留）
+test       325 项，全通过：
+             pf_core 91 / pf_crypto 57 / pf_data 19 / pf_io 23 / pf_testkit 55 / guards 80
 vectors    98 条通过，失败 0，待实现 0，判定摘要 f573cf9de746…
 新增工具    assert_test_report.dart 三条分支（0/1/2）逐一实测通过
 ```
+
+> 上面两个数字里，`76 → 79` 与 `guards 61 → 80`（`5 项 → 6 项`）是
+> 2026-09-16 补入第四条门禁（入库路径检查）带来的；`+19` 项测试 =
+> `tracked_paths_test.dart` 16 条 + `guards_test.dart` 的 3 条集成用例。
+> 记录它是为了让人能一眼看出「数字变了」的原因，而不是去怀疑是不是漏跑了什么。
 
 只在本机做过一次、CI 上会重做的关键验证：`dart pub global activate melos 6.3.2`
 在本机成功（6.3.3 失败，见 §3 P0-1）。
@@ -138,8 +151,15 @@ git ls-files --eol | grep "w/crlf"
 > `apps/pf_mobile/.flutter_tool_state`（内容只有 `{"is-bot": false}`）——
 > 那是 flutter_tools 在本机跑过一次命令后写的运行时状态。当时的 `.gitignore`
 > 里没有这条规则，而**三关卡没有一关会发现它**：门禁查的是代码、依赖与向量，
-> 没有任何一关在回答「哪些文件被提交了」。这一条只能靠人看。
-> 已补进 `.gitignore`（`ea78aee`）并加进上面的 grep 模式。
+> 没有任何一关在回答「哪些文件被提交了」。
+>
+> 事后补了两层：`.gitignore` 加规则（`ea78aee`）、上面加 grep 模式；
+> 以及**新增的第四条门禁** `melos run guards:tracked-paths`
+> （读 `git ls-files --cached`，见 §3 的「P1 · 入库路径检查」）。
+> 后者才是真正的答案：人记得看的次数永远少于机器自动看的次数，
+> 而 `.gitignore` 也拦不住 `git add -f`。
+> 手动的 ①②③④ 仍然值得跑一遍 —— 但它们的定位已经从「唯一防线」
+> 变成「推送前的最后一次确认」。
 
 #### 1.2-B · PowerShell（5.1 可用，本机实测）
 
@@ -372,14 +392,16 @@ PY
 | 安装 melos | `melos 可执行目录：/home/runner/.pub-cache/bin` 且 `ls` 列出 `melos` |
 | 解析工作区依赖 | `flutter pub get` 成功；根目录生成唯一 `pubspec.lock` |
 | 打印工具版本 | `melos --version` → **6.3.2**（见 §3 P0-1：写成 6.3.3 这一步就红） |
-| 检查格式 | `Formatted 76 files (0 changed)` |
+| 检查格式 | `Formatted 79 files (0 changed)`（M0 当时是 76；判定线是 `0 changed`，不是这个数字） |
 | 静态分析 | 每个包 `No issues found!` |
-| 五个 guards | 每项 `error=0` |
-| 上传门禁报告 | artifact `guards-report-<sha>`，内含 `deps/banned-api/logging/manifest/version.json` |
+| 六个 guards | 每项 `error=0`（`deps` / `banned-api` / `logging` / `manifest` / `version` / `tracked-paths`） |
+| 上传门禁报告 | artifact `guards-report-<sha>`，内含 `deps/banned-api/logging/manifest/version/tracked-paths.json` |
 
-失败时最常见的三条：格式不一致（本机没跑 `dart format` 就提交）、
+失败时最常见的四条：格式不一致（本机没跑 `dart format` 就提交）、
 `guards:version`（改了 `PfBuildInfo.appVersion` 忘了改 pubspec）、
-`guards:deps`（加了新的传递依赖未登记）。
+`guards:deps`（加了新的传递依赖未登记）、
+`guards:tracked-paths`（把不该入库的文件加进了索引，或新增了未登记的区域 ——
+见 §3 的「P1 · 入库路径检查」）。
 
 ### 2.2 gate2-test.yml · 三平台矩阵
 
@@ -557,6 +579,26 @@ echo "写进 GITHUB_PATH: $PUB_BIN"; ls -1 "$PUB_BIN_POSIX"
 会得到一个 MSYS 判不出来的路径；而写回 `$GITHUB_PATH` 时必须是反斜杠形式，
 因为 Windows 上后续步骤默认走 pwsh。
 
+**同一根因的第二种面孔（2026-09-16 实测）**：复合脚本里**每一个叶子**都会再调用
+一次 `melos`（`melos run guards:deps && melos run guards:banned-api && …`）。
+若你是用 `dart run melos run guards` 这种方式启动链（即 `melos` 本身不在 PATH 上），
+链会在第一个叶子上以这样的形式失败：
+
+```
+melos run guards
+  └> melos run guards:deps && … && melos run guards:tracked-paths
+     └> RUNNING
+ERROR: 'melos' 不是内部或外部命令
+     └> FAILED
+ScriptException: The script guards failed to execute.
+```
+
+**这不是门禁失败**，是「启动器能找到 melos、链里的子命令找不到」。
+判据：如果**第一个**叶子（`guards:deps`）就报找不到 melos，那就是 PATH 问题；
+如果前面的叶子都 SUCCESS、只有后面某个 FAILED，那才是真的检查不通过。
+本机把 `%LOCALAPPDATA%\Pub\Cache\bin`（里面有 `melos.bat`）加进 PATH 之后，
+链的失败传播就正常了：最后一个叶子 FAILED → `guards` FAILED → 退出码 1。
+
 ### P0-5 关卡 2 的「断言 widget 测试确实执行」在**三个平台同时**失败 `[已修 · 首次推送实际命中]`
 
 这是 M0 首推（提交 `a451c04`）**唯一**的失败：关卡 1 全绿、关卡 3 四个作业全绿，
@@ -633,7 +675,90 @@ shell 的启动横幅（`.bashrc` 里 `echo`）混进 stdout。
 `assert_test_report.dart` 在退出码 2 时会列出三条常见成因。
 这样下次同类问题在 CI 日志里就能自解释，不用再回本机复现一遍。
 
-### P1 行尾 CRLF 让关卡 1 在 Linux 上失败
+### P1 · 入库路径检查（`tracked-paths`）失败 —— 先分清「真的错了」与「读不到索引」
+
+对应步骤：`入库路径检查（git 索引）` → `melos run guards:tracked-paths`。
+它是唯一一条读 `git ls-files --cached` 的检查：**其他检查查「内容」，它查「哪些路径进来了」**。
+出现红色时先看**退出码**，两种情形的处理完全不同。
+
+**症状 A：`error=N`、退出码 1 —— 门禁在工作，索引里确实有不该入库的东西。**
+
+```
+ERROR   [tracked-local-state] apps/pf_mobile/.flutter_tool_state
+        该路径禁止入库（命中规则 tracked-local-state）。
+        → 这类文件记录的是「某一台机器上某一次运行」的状态……
+   ✗ FAIL  error=2 warning=0 info=0
+```
+
+**症状 B：`✗ 门禁无法完成判定（退出码 2）` —— 环境读不到索引，不是代码问题。**
+
+```
+✗ 门禁无法完成判定（退出码 2）
+  git ls-files 失败（退出码 128）：fatal: detected dubious ownership in repository at '...'
+  → 按提示执行 `git config --global --add safe.directory ...` 后重试。
+```
+
+或 `无法执行 git —— 它不在 PATH 中，或本机没有安装。`
+
+区分它们的意义：**退 1 去改代码，退 2 去修环境**。把 2 当 1 处理，
+人会开始删规则或加豁免；反过来把 1 当 2 处理，就会把一个真问题当成环境抖动重跑。
+
+**定位命令**（Git Bash，仓库根）：
+
+```bash
+# ① 先把「谁进来了」列出来 —— 这一步不依赖本项目的任何脚本
+git ls-files --cached | wc -l
+git ls-files --cached | grep -E "\.dart_tool/|/build/|/coverage/|\.db$|\.pfb$|\.pfk$|_state$|\.log$"
+
+# ② 再让门禁告诉你它归哪条规则（它会打印 ruleId 与理由）
+melos run guards:tracked-paths
+
+# ③ 索引里有哪些「本次改动才加进来的」（误提交通常在暂存区里一眼可见）
+git diff --cached --name-status
+```
+
+**修复方向**，按命中的规则分三类：
+
+| 命中 | 该做什么 |
+|---|---|
+| `tracked-build-output` / `tracked-local-state` / `tracked-database` / `tracked-vault-file` / `tracked-secret-material` / `tracked-installer-artifact` / `tracked-log-file` | 这些**从来不该入库**：`git rm --cached <path>` 移出索引 → 补一条 `.gitignore` 规则 → 提交。**已经提交过的话**，历史里的副本不会因为后续删除而消失（对密钥来说意味着必须换密钥），所以这一步越早越好 |
+| `tracked-unexpected`（不在白名单内的区域） | 判断它是不是「有意新增的一整块区域」：是 → 在 `tools/guards/rules/tracked_paths.yaml` 的 `allow` 下登记一条 glob（**这个动作会出现在 diff 里，这正是本条要的摩擦**：新增区域必须是一次看得见的决定）；否 → 同上一行处理 |
+| `tracked-case-collision`（大小写折叠后重名） | 重命名其中一个。macOS / Windows 的文件系统默认不区分大小写，两个路径会互相覆盖；这不是风格问题，是「换台机器就坏」 |
+
+**两件容易误判的事**：
+
+1. **`.gitignore` 不是这道门禁的替代品，两者是互补的。** `.gitignore` 管的是
+   「别自动加进来」；本检查管的是「已经加进来了」。
+   `.flutter_tool_state` 那次之所以漏过去，正是因为 `.gitignore` 里没有这条规则；
+   而反过来，`git add -f` 能无视任何 `.gitignore` —— 本检查无视不了。
+2. **工作区里存在、但没有被追踪的文件不会让它变红。** 它读的是索引，
+   不是磁盘。想验证这一点：`touch data/x.db` 之后直接跑门禁，仍然 PASS；
+   `git add data/x.db` 之后立刻变红（含 `.gitignore` 已忽略的文件，用 `-f` 加）。
+
+**本机复现（含反例）**：
+
+```bash
+cd D:/workbuddy/pf-wallet
+
+# 正例：当前索引应当 PASS（trackedFiles=115 上下，deniedPaths=0）
+melos run guards:tracked-paths
+
+# 反例：造一个违规文件并入库 → 期望 exit 1 且报 tracked-local-state
+printf '{"is-bot": false}' > apps/pf_mobile/.flutter_tool_state
+git add -f apps/pf_mobile/.flutter_tool_state      # 已被 .gitignore 忽略，所以需要 -f
+melos run guards:tracked-paths ; echo "exit=$?"     # 期望 exit=1
+
+# 清理（务必做，否则它会跟着下一个提交进仓库）
+git rm --cached apps/pf_mobile/.flutter_tool_state
+rm -f apps/pf_mobile/.flutter_tool_state
+git status --short                                  # 期望只剩你本来要提交的东西
+```
+
+**没有 git 时怎么办**：这条检查会以退出码 2 失败，这是刻意的 ——
+一个「读不到索引就跳过」的门禁等于在最需要它的地方（CI 的干净 checkout）没有存在感。
+若你确实在一个没有 `.git` 的源码快照里跑 `guards all`，单独跑其余五项即可。
+
+### P1 · 行尾 CRLF 让关卡 1 在 Linux 上失败
 
 **症状**：
 

@@ -99,6 +99,7 @@ melos run ci:gate3     # 黄金向量
 | `melos run vectors:pending` | 列出尚未实现的向量（M1/M2 待办） |
 | `melos run guards` | 全部自定义门禁 |
 | `melos run guards:deps` | 只跑依赖黑名单检查 |
+| `melos run guards:tracked-paths` | 只跑入库路径检查（读 `git ls-files`，须在 git 仓库里跑） |
 
 `pf_mobile` 的平台目录（android/ ios/）由 `flutter create` 生成，不入库：
 
