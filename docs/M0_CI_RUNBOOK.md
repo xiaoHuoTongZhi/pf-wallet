@@ -47,7 +47,8 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 
 > **上表之后的追加改动（2026-09-15，M0 判定完成之后）**：三份 workflow 的
 > `push` / `pull_request` 增加了 `paths-ignore`，纯文档提交不再触发 CI。
-> 动机、代价与将来的坑见 **§1.6**。
+> 动机、代价与将来的坑见 **§1.6**；连推两次会让前一次的运行变 `cancelled`
+> 这条容易误判的行为见 **§1.7**。
 
 ### 0.3 本机复检结果（改动后）
 
@@ -305,6 +306,48 @@ M0 首推的实测结果印证了这个分层：关卡 1 一次绿、关卡 3 �
 并把三关卡设为**必需检查**，纯文档 PR 会因为「没有检查项」而永远等不到
 required check 通过。届时把 `pull_request` 段下的 `paths-ignore` 删掉即可
 （`push` 段的保留）—— 那一刻起，正确性优先于成本。
+
+### 1.7 连着推两次，前一次的运行会被取消（不是失败）
+
+**本机实测**（2026-09-16，同一分支相隔 34 秒的两次推送）：
+
+| 提交 | 运行创建 | 结束 | 结论 |
+|---|---|---|---|
+| `ea78aee` gate1 / gate2 / gate3 | 06:45:45 | 06:46:20 ~ 06:46:27 | `cancelled` ×3 |
+| `ad90673` gate1 / gate2 / gate3 | 06:46:19 | 06:47:32 ~ 06:48:57 | `success` ×3 |
+
+两次运行**同时在跑**的时候，新推送到达 → 旧的三个 run 在 40 秒内被置为
+`cancelled`。所以：
+
+- **`cancelled` 不等于失败**，它常常只是「你 30 秒后又推了一次」。
+  以它为红点去排查，方向从一开始就是错的。
+- **门禁记录挂在「最新提交的树」上，不挂在每一个提交上**。
+  中间那次提交（这里是 `ea78aee`）可能一次完整的绿都没有过 ——
+  它无害的前提是**它的改动被后一个提交的树完整包含**（本例成立：
+  `ad90673` 是 `ea78aee` 的子提交，树是超集）。
+  若两次推送的改动互不包含，`cancelled` 的那次就是真的没被验过。
+- **判据要按 sha 去对 run**，不要用「最近一次运行」。查法：
+
+```bash
+# 列出指定提交的全部运行及其结论（本机没装 gh，用 API）
+python - <<'PY'
+import json, urllib.request
+REPO = "xiaoHuoTongZhi/pf-wallet"
+SHA = "ad90673"          # ← 换成要看的前 7 位
+op = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 显式绕开环境代理
+req = urllib.request.Request(
+    f"https://api.github.com/repos/{REPO}/actions/runs?per_page=40",
+    headers={"Accept": "application/vnd.github+json", "User-Agent": "ci-watch"})
+for r in json.load(op.open(req, timeout=30))["workflow_runs"]:
+    if r["head_sha"].startswith(SHA):
+        print(f'{r["name"]:15s} {r["status"]:11s} {r["conclusion"]}')
+PY
+```
+
+**推论（重要）**：既然「最新的树」才是被验对象，那么把无关紧要的文档微调
+与代码改动**分成两次推送**是有代价的 —— 文档那次会白跑一轮 CI（若它含
+非 `docs/**` 文件），或者干脆取消掉前一次的运行。要省 CI 也省事，
+就把它们合成一次推送。
 
 ---
 
