@@ -120,7 +120,7 @@ git status --short | grep -c  "test_vectors/v1/"                # 期望 7 个�
 git status --short | grep -c  "pubspec.lock"                    # 期望 1
 
 # ② 绝不能出现的东西（否则立刻停下，先修 .gitignore）
-git status --short | grep -E "\.dart_tool|/build/|\.pfb$|\.pfk$|pf_wallet\.db|coverage/" \
+git status --short | grep -E "\.dart_tool|/build/|\.pfb$|\.pfk$|pf_wallet\.db|coverage/|\.flutter_tool_state" \
   && echo "✗ 有构建产物或密钥文件被暂存，停下" \
   || echo "✓ 无构建产物 / 密钥文件被暂存"
 
@@ -132,6 +132,13 @@ git status --short | wc -l
 #    门禁脚本按行读源码时，以 $ 结尾的匹配在 CRLF 下行为不同。
 git ls-files --eol | grep "w/crlf"
 ```
+
+> **② 这一条为什么值得单独写出来**：2026-09-16 的提交 `3ebe837` 里混进了
+> `apps/pf_mobile/.flutter_tool_state`（内容只有 `{"is-bot": false}`）——
+> 那是 flutter_tools 在本机跑过一次命令后写的运行时状态。当时的 `.gitignore`
+> 里没有这条规则，而**三关卡没有一关会发现它**：门禁查的是代码、依赖与向量，
+> 没有任何一关在回答「哪些文件被提交了」。这一条只能靠人看。
+> 已补进 `.gitignore`（`ea78aee`）并加进上面的 grep 模式。
 
 #### 1.2-B · PowerShell（5.1 可用，本机实测）
 

@@ -7,6 +7,13 @@ build/
 coverage/
 *.lock.orig
 
+# flutter_tools 在**项目根下**写的运行时状态（内容如 {"is-bot": false}）。
+# 它不是配置、不是源码，是本机跑过一次 flutter 命令的痕迹 ——
+# 提交它等于把「我这台机器跑过 flutter」写进历史。
+# 2026-09-16 补：它曾漏进 3ebe837，因为原白名单里没有这一条。
+.flutter_tool_state
+**/.flutter_tool_state
+
 # pubspec.lock 必须入库（可复现构建 + 依赖审计基准）
 !pubspec.lock
 
