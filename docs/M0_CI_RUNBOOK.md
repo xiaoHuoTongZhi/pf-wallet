@@ -1013,6 +1013,22 @@ grep -n "^- \[ \]" docs/M0_ACCEPTANCE.md      # 改完后应当没有输出
 
 ### 5.2 `smoke_test.dart` 反向断言的改写时机
 
+> **[已执行 · M1 第一步]** 提交 `3ebe837`（`main` 上现为 `ad90673`）。
+> 三关卡全绿，含关卡 2 三平台第 9 步断言 —— 该断言要求的第三个用例名
+> 即新名 `未解锁时不得出现任何可写入账目的界面`，因此它的绿同时证明
+> 「新断言真的执行了」与「在新断言下确实通过」。
+>
+> - 关卡 1：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/35065249172`
+> - 关卡 2：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/35065249221`
+> - 关卡 3：`https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/35065249134`
+>
+> 实际落地的形态与本节的示意有两处出入，都以本节下方的「落地形态」为准：
+> ① 入口位置定在**底部按钮**（`Scaffold.bottomNavigationBar`），不是 AppBar 动作；
+> ② 判据由一条变三条 —— 只断言「进了解锁页」不够，得同时证明
+> **入口存在且唯一**、**真的发生了跳转**（`BuildStatusPage` 对 finder 不可见）、
+> **账目字段仍不出现**。少了第 ① 条，后两条可被 `if (entryExists)`
+> 包成空断言，「把入口藏起来」就能伪装成通过。
+
 **改写时机：M1 的第一件事，不是 M0 的收尾。**
 
 `apps/pf_mobile/test/smoke_test.dart` 里那条负面断言是 M0 最刻意的护栏：
@@ -1032,16 +1048,38 @@ testWidgets('MVP 阶段不得出现任何「记账」入口', (WidgetTester test
 改写的正确做法（三件事一起做，缺一件就等于偷偷拆护栏）：
 
 1. **不是删掉它，而是把它升级成「入口存在且被锁住」** ——
-   改成断言「点击『记一笔』后进入的是解锁页，而不是记账页」：
+   改成断言「点击『记一笔』后进入的是解锁页，而不是记账页」。
+
+   **落地形态（三条判据，不是一条）**，与上面的示意不同，照这个抄：
+
    ```dart
    testWidgets('未解锁时不得出现任何可写入账目的界面', (WidgetTester tester) async {
      await tester.pumpWidget(const PfWalletApp());
+
+     // ① 入口必须在、且只能有一个。
+     //    少了这条，后两条可被 `if (entryExists) { ... }` 包成空断言 ——
+     //    「把入口藏起来」就成了一种通过方式。
+     expect(find.text('记一笔'), findsOneWidget);
+
      await tester.tap(find.text('记一笔'));
      await tester.pumpAndSettle();
+
+     // ② 既要「进了解锁页」，也要「真的离开了原页面」。
+     //    只断言前者的话，「点了没反应」这种坏法看不见。
      expect(find.byType(UnlockPage), findsOneWidget);
-     expect(find.text('收入'), findsNothing);   // 关键：仍不能出现账目字段
+     expect(find.byType(BuildStatusPage), findsNothing);
+
+     // ③ 关键约束，与升级前一致：账目字段仍不得出现。
+     for (final String label in <String>['收入', '支出', '账单', '余额', '金额']) {
+       expect(find.text(label), findsNothing, reason: '未解锁界面上不得出现账目字段「$label」');
+     }
    });
    ```
+
+   ②里的 `findsNothing` 是可靠的，不需要 `find.byKey` 或 `skipOffstage: false`：
+   遮挡路由仍在 element 树里，但 `_TheaterElement.debugVisitOnstageChildren`
+   会 `children.skip(theater.skipCount)`（`flutter/lib/src/widgets/overlay.dart:1010`），
+   而 finder 默认 `skipOffstage: true`。
 2. **改完后把 `assert_test_report.dart` 的 `--require` 参数同步改掉**
    （CI 里那三个 `--require` 字面量）。这一步是刻意的摩擦：改名/改语义绕过门禁
    必须是**一次看得见的修改**，不能靠 CI 恰好看不见。
