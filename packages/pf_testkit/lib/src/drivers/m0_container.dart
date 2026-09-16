@@ -6,9 +6,6 @@
 /// 迫使改动者先想清楚「旧文件怎么办」。
 library;
 
-import 'dart:typed_data';
-
-import 'package:crypto/crypto.dart';
 import 'package:pf_core/pf_core.dart';
 import 'package:pf_crypto/pf_crypto.dart';
 
@@ -169,11 +166,15 @@ final class ContainerDigestVerifyDriver extends VectorDriver {
       parseHex(requireString(input, 'trailerHex', kind), '$kind.trailerHex'),
     );
     final ciphertext = requireHexBytes(input, 'ciphertextHex', kind);
-    final computed = Uint8List.fromList(sha256.convert(ciphertext).bytes);
+    // 走 pf_crypto 的实现，而不是在本文件里再算一次摘要。
+    // 这是 README 第三条红线（**加密只有一份实现**）的落地：
+    // 驱动里若各有一份 sha256，那么「换摘要算法」就会有一处漏改，
+    // 而漏改的后果是所有备份被静默判成损坏。
+    final verdict = PfbDigest.verify(trailer: trailer, ciphertext: ciphertext);
     return VectorOutcome.value(<String, Object?>{
-      'matches': constantTimeEquals(computed, trailer.digest),
-      'computedDigestHex': toHex(computed),
-      'declaredDigestHex': toHex(trailer.digest),
+      'matches': verdict.matches,
+      'computedDigestHex': verdict.computedHex,
+      'declaredDigestHex': verdict.declaredHex,
     });
   }
 }
@@ -281,4 +282,4 @@ final class ContainerFormatConstantsDriver extends VectorDriver {
       });
 }
 
-String _sha256Hex(List<int> bytes) => sha256.convert(bytes).toString();
+String _sha256Hex(List<int> bytes) => Sha256.instance.hashHex(bytes);

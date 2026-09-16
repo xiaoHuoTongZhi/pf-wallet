@@ -60,19 +60,22 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 ### 0.3 本机复检结果（改动后）
 
 ```
-format     Formatted 79 files (0 changed)        ← M0 当时 76；判定线是 0 changed
+format     Formatted 81 files (0 changed)        ← M0 当时 76；判定线是 0 changed
 analyze    No issues found!                      （--fatal-infos --fatal-warnings）
 guards     6 项检查，error=0 warning=13          （deps 11 / manifest 2，均为刻意保留）
-test       325 项，全通过：
-             pf_core 91 / pf_crypto 57 / pf_data 19 / pf_io 23 / pf_testkit 55 / guards 80
-vectors    98 条通过，失败 0，待实现 0，判定摘要 f573cf9de746…
+test       340 项，全通过：
+             pf_core 91 / pf_crypto 72 / pf_data 19 / pf_io 23 / pf_testkit 55 / guards 80
+vectors    98 条通过，失败 0，待实现 0，判定摘要 f573cf9de746…（与上一版逐字符相同）
 新增工具    assert_test_report.dart 三条分支（0/1/2）逐一实测通过
 ```
 
-> 上面两个数字里，`76 → 79` 与 `guards 61 → 80`（`5 项 → 6 项`）是
-> 2026-09-16 补入第四条门禁（入库路径检查）带来的；`+19` 项测试 =
+> 上面这些数字里，`76 → 79` 与 `guards 61 → 80`（`5 项 → 6 项`）是
+> 2026-09-16 上午补入第四条门禁（入库路径检查）带来的；`+19` 项测试 =
 > `tracked_paths_test.dart` 16 条 + `guards_test.dart` 的 3 条集成用例。
-> 记录它是为了让人能一眼看出「数字变了」的原因，而不是去怀疑是不是漏跑了什么。
+> `79 → 81` 与 `pf_crypto 57 → 72` 是同日下午落地第一个加密原语
+> （`src/digest.dart`：摘要契约 + SHA-256）带来的，`+15` 项测试 = `digest_test.dart`。
+> 记录它是因为数字会一直变，而**判定线不变** —— 追数字本身没有意义，
+> 有意义的是知道「它为什么变了」。
 
 只在本机做过一次、CI 上会重做的关键验证：`dart pub global activate melos 6.3.2`
 在本机成功（6.3.3 失败，见 §3 P0-1）。
@@ -740,7 +743,9 @@ git diff --cached --name-status
 ```bash
 cd D:/workbuddy/pf-wallet
 
-# 正例：当前索引应当 PASS（trackedFiles=115 上下，deniedPaths=0）
+# 正例：当前索引应当 PASS（trackedFiles=118 上下，deniedPaths=0）
+#      这个数字是「索引里的文件总数」，只会随正常提交增长，不要拿它当判据 ——
+#      判据是 deniedPaths / caseCollisions / unexpectedPaths 三项为 0。
 melos run guards:tracked-paths
 
 # 反例：造一个违规文件并入库 → 期望 exit 1 且报 tracked-local-state

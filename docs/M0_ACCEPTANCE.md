@@ -28,7 +28,12 @@
 
 - **不写任何记账业务逻辑**：没有账户、分类、账单、统计。
 - **不实现加密**：`.pfb` 容器的**字节布局**已被向量钉死，但 KDF / AEAD / 密钥环
-  的实现留到 M2。相关向量现在处于 `pending` 状态，且被基线记录在案。
+  的实现留到 M1。
+  更正（2026-09-16）：这里原文写「相关向量现在处于 `pending` 状态，且被基线记录在案」，
+  与事实不符。`test_vectors/pending_baseline.json` 的 M0 基线是**空数组**，
+  且 M0 阶段本就没有加密原语的向量 —— 因为按方案 §7.6 的顺序原则，
+  **期望值必须由独立参考实现生成**（Python `argon2-cffi` / `cryptography`），
+  不能先摆一个空壳占位。加密向量与 M1 的原语实装同期落地。
 - **不接 SQLite、不接平台能力**：`pf_data` 只有迁移编排的纯逻辑，没有真实库文件。
 - **不出可发布产物**：`apps/pf_mobile` 是一个能跑起来的骨架页，不是 App。
 
@@ -269,7 +274,7 @@ melos run ci:all         # = gate1 → gate2 → gate3
 | 10 | `melos run vectors` | `全部已实现向量通过`，失败 0、待实现 0 | ✅ 98 条通过，摘要 `f573cf9de746…` |
 | 11 | `melos run vectors:pending` | 与基线一致（M0 为空） | ✅ 无 pending |
 | 12 | `python3 tools/ci/compare_verdicts.py <三份报告>` | 三平台摘要一致 | ✅ 关卡 3 的 `跨平台判定一致性` 作业通过（提交 `36206c6`，4 个作业全绿）<br>本机仍只能产出一份报告 —— 比对工具会以退出码 2 拒绝少于两份的输入，这是刻意的：一份报告的「一致」没有意义 |
-| 13 | `melos run guards:tracked-paths` | `error=0` | 🆕 **M1 期间补入的门禁**（不是 M0 的交付物）。本机实测：`trackedFiles=115 deniedPaths=0 caseCollisions=0 unexpectedPaths=0` → PASS。反例已验证：把 `.flutter_tool_state`、`build/…/ledger.db`、`scripts/publish.sh` 依次 `git add` 进索引，三条规则各自命中、退出码 1（详见 `M0_CI_RUNBOOK.md` §3 的「P1 · 入库路径检查」） |
+| 13 | `melos run guards:tracked-paths` | `error=0` | 🆕 **M1 期间补入的门禁**（不是 M0 的交付物）。本机实测：`trackedFiles=118 deniedPaths=0 caseCollisions=0 unexpectedPaths=0` → PASS。反例已验证：把 `.flutter_tool_state`、`build/…/ledger.db`、`scripts/publish.sh` 依次 `git add` 进索引，三条规则各自命中、退出码 1（详见 `M0_CI_RUNBOOK.md` §3 的「P1 · 入库路径检查」）。<br>口径：`trackedFiles` 是**当时索引里的文件总数**，会随正常提交增长（115 → 118 是补入这道门禁自身的 3 个新文件所致）；判据是 `deniedPaths/caseCollisions/unexpectedPaths` 三项为 0，不是这个数字本身 |
 
 ### 允许存在的 warning
 

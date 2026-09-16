@@ -1,8 +1,9 @@
 name: pf_crypto
 description: >-
   加密层：Argon2id 参数与密钥派生契约、AES-256-GCM 契约、PFB 加密容器二进制格式、
-  密钥保险箱契约。M0 交付「格式与参数」的完整可测实现（纯字节运算，无需原生库）；
-  算法实现于 M2 接入原生库后补齐，同时以黄金向量锁定行为。
+  密钥保险箱契约、摘要原语。M0 交付「格式与参数」（纯字节运算）；
+  M1 补齐原语层（摘要 / HKDF / AEAD / KDF 的实装），算法来自经过评审的依赖，
+  本仓不手写密码学原语。容器编解码器与 Keyring 实装属 M1 后续与 M2。
 publish_to: none
 resolution: workspace
 version: 0.1.0
@@ -11,6 +12,9 @@ environment:
   sdk: ^3.7.0
 
 dependencies:
+  # SHA-256。选择它的理由见 lib/src/digest.dart —— 不是因为「最安全」，
+  # 而是因为容器格式已经把 32 字节的 SHA-256 钉在了文件尾。
+  crypto: ^3.0.6
   pf_core: ^0.1.0
 
 dev_dependencies:

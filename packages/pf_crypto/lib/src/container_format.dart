@@ -72,6 +72,7 @@ import 'package:pf_core/pf_core.dart';
 
 import 'argon2_params.dart';
 import 'byte_order.dart';
+import 'digest.dart';
 
 /// 文件头魔数：ASCII `PFB1`。
 const List<int> pfbMagic = <int>[0x50, 0x46, 0x42, 0x31];
@@ -407,6 +408,65 @@ final class PfbTrailer {
 
   @override
   String toString() => 'PfbTrailer(digest=${toHex(digest).substring(0, 16)}…)';
+}
+
+/// 摘要核对结果。
+///
+/// 三个字段与向量 kind `container.digest.verify` 的期望值一一对应 ——
+/// 向量同时比对 [computedHex] 与 [declaredHex]，而不是只断言 [matches]。
+/// 只断言布尔值的话，一个「无论如何都返回 false」的实现能让全部反例通过，
+/// 而它同样会让所有正常备份被判成「文件损坏」。
+final class PfbDigestVerdict {
+  PfbDigestVerdict({required this.computed, required this.declared});
+
+  /// 由**密文段**实际算出的摘要。
+  final Uint8List computed;
+
+  /// 文件尾里声明的摘要。
+  final Uint8List declared;
+
+  /// 两者是否一致。用恒定时间比较 —— 摘要不是秘密，但比较函数只该有一种写法。
+  bool get matches => constantTimeEquals(computed, declared);
+
+  String get computedHex => toHex(computed);
+
+  String get declaredHex => toHex(declared);
+
+  @override
+  String toString() =>
+      'PfbDigestVerdict(matches=$matches, computed=${computedHex.substring(0, 16)}…)';
+}
+
+/// 容器文件尾摘要的核对。
+///
+/// 这是「密码错」与「文件损坏」能被区分开的全部依据，因此它必须是
+/// **本层的一个具名动作**，而不是散落在调用点里的一行 `sha256.convert(...)`：
+/// 那样的话，某天有人把摘要改成对**明文**计算，加密层不会有任何测试报错，
+/// 而泄漏已经发生（明文摘要可以被拿去离线比对猜测内容）。
+abstract final class PfbDigest {
+  /// 用 [digest] 核对 [ciphertext] 是否与 [trailer] 声明的摘要一致。
+  ///
+  /// [ciphertext] 是**密文段**，不是明文，也不是整个文件 ——
+  /// 文件头与文件尾都不参与计算，否则摘要就无法在「还不知道密码」时算出来。
+  static PfbDigestVerdict verify({
+    required PfbTrailer trailer,
+    required List<int> ciphertext,
+    Digest digest = Sha256.instance,
+  }) {
+    if (trailer.digestAlgorithm != PfbAlgorithm.digestSha256) {
+      // PfbTrailer 的构造函数已经拒绝了未知算法 ID，所以这条分支当前不可达。
+      // 留着它是为了让「将来新增摘要算法」必须显式改这里：
+      // 一个默默用错算法的实现会算出一个恒不相符的摘要，
+      // 而那会被用户读成「我的备份坏了」。
+      throw ContainerError.headerInvalid(
+        detail: '文件尾声明的摘要算法 ID ${trailer.digestAlgorithm} 没有对应的实现',
+      );
+    }
+    return PfbDigestVerdict(
+      computed: digest.hash(ciphertext),
+      declared: Uint8List.fromList(trailer.digest),
+    );
+  }
 }
 
 /// 已切分好的容器区段。**全部是原缓冲区的视图**，不复制数据。

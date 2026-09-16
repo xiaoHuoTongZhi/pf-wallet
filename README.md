@@ -6,9 +6,12 @@
 
 ---
 
-## 当前阶段：M0（骨架与门禁）
+## 当前阶段：M1（数据与加密打通）
 
-M0 只交付「能开工并且踩不歪」的基础设施，不含业务功能。范围与验收标准见 `docs/M0_ACCEPTANCE.md`。
+M0（骨架与门禁）已完成并通过 CI，验收清单见 `docs/M0_ACCEPTANCE.md`。
+M1 按方案 §7.6 的顺序推进，当前落在**第一步：`pf_crypto` 原语层**
+（摘要 / HKDF-SHA256 / AES-256-GCM / Argon2id 的实装）。
+容器编解码器、Keyring 实装、SQLCipher 打开流程仍在后面，尚未开工。
 
 ---
 
@@ -54,11 +57,15 @@ pf_mobile ──▶ pf_ui ──▶ pf_core
     │                │
     └──▶ pf_crypto ──┴──▶ pf_core
 
-pf_testkit ──▶ pf_core （仅测试期使用）
+pf_testkit ──▶ pf_core / pf_crypto / pf_io （仅测试期使用）
 tools/guards  独立，不依赖任何 package
 ```
 
 规则：**箭头只能单向，且任何 package 不得反向依赖 `apps/`**。`pf_core` 必须零三方依赖（除 `meta`）。
+
+`pf_testkit` 是**向量的驱动侧**，因此它必须能引用被测对象（`pf_crypto`）——
+但它**不得自己实现加密原语**：README 第三条红线要求「加密只有一份实现」，
+驱动里再算一遍 SHA-256 就等于埋了第二份实现，而漏改的那一份不会有任何编译错误。
 
 ---
 

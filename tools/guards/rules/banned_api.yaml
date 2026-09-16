@@ -125,7 +125,11 @@ rules:
     rationale: >-
       短路的 == 与 ListEquality 会在第一个不同字节处返回，
       攻击者可以通过计时差异逐字节还原正确的 MAC。
-      必须使用常量时间比较（见 pf_crypto 的 ConstantTime.equals）。
+      必须使用常量时间比较（`pf_core` 的 `constantTimeEquals`）。
+      注：本行原文写的是「pf_crypto 的 ConstantTime.equals」，两处都错 ——
+      该函数在**领域层** `pf_core`（因为数据层的校验和、测试工具的十六进制表示
+      也要用它，而它本身不含任何算法选择），且名字是 `constantTimeEquals`。
+      放在加密层会让 pf_data 反向依赖 pf_crypto。
     patterns:
       - '\bListEquality\b'
       - '\bsetEquals\s*\('
