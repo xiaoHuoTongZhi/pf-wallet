@@ -98,11 +98,11 @@ pf-wallet/
 ### 关卡 1 · 静态门禁 —— 只在一台机器上跑
 
 **为什么只跑 ubuntu**：这一关校验的是「源码文本」与「入库路径」是否合规（格式、lint、
-依赖声明、禁用 API、日志脱敏、平台清单、版本号、被提交的路径）。这些都是平台无关的判断，
+依赖声明、禁用 API、日志脱敏、平台清单、版本号、被提交的路径、向量覆盖）。这些都是平台无关的判断，
 在三台机器上重复跑只会把 CI 时间乘以 3，不会多发现一个 bug。
 
 ```bash
-melos run ci:gate1      # = format → analyze → guards（6 项）
+melos run ci:gate1      # = format → analyze → guards（6 项）→ vectors:coverage
 ```
 
 | 步骤 | 命令 | 失败意味着 |
@@ -115,6 +115,7 @@ melos run ci:gate1      # = format → analyze → guards（6 项）
 | 平台清单 | `guards manifest` | Android `allowBackup` 未关、权限超集、iOS 备份排除缺失 |
 | 版本一致性 | `guards version` | `PfBuildInfo.appVersion` 与各 `pubspec.yaml` 的 `version` 不一致 |
 | 入库路径 | `guards tracked-paths` | **被提交的路径**里有禁止入库的文件（构建产物 / 本地状态 / 数据库 / 密钥 / 安装包 / 日志）、大小写折叠后重名的路径，或不在白名单内的新区域。它是唯一一条读 `git ls-files --cached` 的检查 —— 其余七条查的都是「内容」，只有它查「哪些路径进来了」（3ebe837 混进 `.flutter_tool_state` 时三关卡全绿，原因就是缺这一条） |
+| 向量覆盖 | `vectors:coverage` | 有**已实现**的驱动没有任何向量引用它。这种状态下列表全绿 —— 没有用例被执行，自然没有用例失败 —— 于是「先写实现、后补向量」可以一路绿灯通过三关卡。它守的是方案 §7.6 的第一条顺序原则（见 `test_vectors/README.md`「顺序：向量必须先于实现」），且因为与被测平台无关，放在单平台关卡而不是三平台矩阵 |
 
 ### 关卡 2 · 测试门禁 —— 三个平台都跑
 
@@ -271,10 +272,11 @@ melos run ci:all         # = gate1 → gate2 → gate3
 | 7 | `melos run guards:manifest` | `error=0` | ✅ error=0 warning=2 |
 | 8 | `melos run guards:version` | `error=0` | ✅ error=0 |
 | 9 | `melos run test` | 全包通过 | ⚠️ 纯 Dart 包全通过（pf_core 91 / pf_crypto 57 / pf_data 19 / pf_io 23 / pf_testkit 34 / guards 61）；`pf_mobile` 的 3 条 widget 测试需 `flutter test`，本机开发沙箱**阻断了 flutter_tester 子进程的启动**（`flutter test --verbose` 停在 artifacts 检查之后，无任何测试输出）。静态分析已覆盖其类型正确性，实际执行交给关卡 2 的三平台 CI<br>**CI 补充（提交 `36206c6`）**：三个平台的第 9 步断言全绿 ⇒ 3 条 widget 测试在 macOS / Windows / Ubuntu 上均真实执行并通过 |
-| 10 | `melos run vectors` | `全部已实现向量通过`，失败 0、待实现 0 | ✅ 98 条通过，摘要 `f573cf9de746…` |
+| 10 | `melos run vectors` | `全部已实现向量通过`，失败 0、待实现 0 | ✅ M0 时 98 条通过，摘要 `f573cf9de746…`；M1 补入 `hkdf_sha256` 后 109 条通过，摘要 `aec08f7118a0…`<br>**口径**：`verdictDigest` 是「`caseId\|status` 行」的 SHA-256（见 §2 关卡 3），因此**新增向量必然改变它**，这不是回归。真正的判据有两条且只此两条：① 失败与待实现均为 0（老用例一条都没坏）② 三平台摘要彼此相同（关卡 3 的 `跨平台判定一致性`）—— 拿摘要与上一个版本比对，在两版向量集合不同时是无意义的 |
 | 11 | `melos run vectors:pending` | 与基线一致（M0 为空） | ✅ 无 pending |
 | 12 | `python3 tools/ci/compare_verdicts.py <三份报告>` | 三平台摘要一致 | ✅ 关卡 3 的 `跨平台判定一致性` 作业通过（提交 `36206c6`，4 个作业全绿）<br>本机仍只能产出一份报告 —— 比对工具会以退出码 2 拒绝少于两份的输入，这是刻意的：一份报告的「一致」没有意义 |
 | 13 | `melos run guards:tracked-paths` | `error=0` | 🆕 **M1 期间补入的门禁**（不是 M0 的交付物）。本机实测：`trackedFiles=118 deniedPaths=0 caseCollisions=0 unexpectedPaths=0` → PASS。反例已验证：把 `.flutter_tool_state`、`build/…/ledger.db`、`scripts/publish.sh` 依次 `git add` 进索引，三条规则各自命中、退出码 1（详见 `M0_CI_RUNBOOK.md` §3 的「P1 · 入库路径检查」）。<br>口径：`trackedFiles` 是**当时索引里的文件总数**，会随正常提交增长（115 → 118 是补入这道门禁自身的 3 个新文件所致）；判据是 `deniedPaths/caseCollisions/unexpectedPaths` 三项为 0，不是这个数字本身 |
+| 14 | `melos run vectors:coverage` | `✓ 覆盖检查：N 个驱动全部有向量引用` | 🆕 **M1 期间补入的门禁**。本机实测：`27 个驱动全部有向量引用` → PASS。<br>反例已验证：用 `--vectors` 指向只含一个套件的临时目录时，退出码 1 并列出 21 个无人引用的 kind（详见 `M0_CI_RUNBOOK.md` §3 的「P1 · 向量覆盖检查」）。<br>它堵的是这样一条路径：**先写实现、再补向量** —— 这种状态下报告全绿（没有用例被执行，自然没有用例失败），三关卡都不响，而向量已经退化成「实现算出什么就接受什么」。<br>能力边界（明确，不夸大）：它只能查「有没有向量」，查不了「期望值是不是独立生成的」—— 后者没有机器判据 |
 
 ### 允许存在的 warning
 

@@ -55,7 +55,11 @@ final class VectorFilter {
 
 /// 一次运行的完整产物。
 final class VectorRun {
-  const VectorRun({required this.report, required this.warnings});
+  const VectorRun({
+    required this.report,
+    required this.warnings,
+    this.uncoveredKinds = const <String>[],
+  });
 
   final VectorReport report;
 
@@ -65,6 +69,16 @@ final class VectorRun {
   ///   - 注册了驱动却没有任何向量引用它（驱动白写了 or 向量漏了）
   ///   - 被筛选条件排除掉的用例数（提醒「本次不是全量跑」）
   final List<String> warnings;
+
+  /// **已实现**但没有任何向量引用它的 kind（排序）。
+  ///
+  /// 与 [warnings] 的区别是「该怎么处理」：提醒只打印，本字段供
+  /// `vector_report.dart --require-coverage` 直接判失败。
+  ///
+  /// 它守的是方案 §7.6 的第一条顺序原则 —— **向量先于实现**。
+  /// 只靠提醒守不住：提醒在 CI 日志里活不过一周，而「实现写了但没人拿它
+  /// 和任何期望值比对」这件事本身不会让任何一条用例变红，因此表现为全绿。
+  final List<String> uncoveredKinds;
 
   /// 未注册 kind 的用例数。这些已经是 fail，这里单列便于 CI 报错定位。
   int get unregisteredKindFailures =>
@@ -111,14 +125,17 @@ final class VectorRunner {
     // 它们的期望值必须由独立的参考实现（argon2 CLI / OpenSSL）生成，
     // 属于 M2 的工作范围。对它们报警只会制造长期存在的噪音，
     // 而噪音会让真正的警报被忽略。
+    final uncovered = <String>[];
     for (final driver in registry.drivers) {
       if (driver.isImplemented && !usedKinds.contains(driver.kind)) {
+        uncovered.add(driver.kind);
         warnings.add(
           '驱动 "${driver.kind}" 已实现但没有任何向量引用它 —— '
           '要么向量漏了，要么 kind 拼错了',
         );
       }
     }
+    uncovered.sort();
     if (skipped > 0) {
       warnings.add('筛选条件排除了 $skipped 条用例，本次不是全量运行');
     }
@@ -132,6 +149,7 @@ final class VectorRunner {
         operatingSystem: env.operatingSystem,
       ),
       warnings: warnings,
+      uncoveredKinds: uncovered,
     );
   }
 

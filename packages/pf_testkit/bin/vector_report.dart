@@ -42,6 +42,7 @@ Future<int> _run(List<String> argv) async {
           negatable: false,
           help: '把当前 pending 集合写回 test_vectors/pending_baseline.json',
         )
+        ..addFlag('require-coverage', negatable: false, help: '已实现的驱动必须至少被一条向量引用，否则判失败（守住「向量先于实现」）')
         ..addMultiOption('kind', help: '只跑指定 kind（可重复）')
         ..addMultiOption('milestone', help: '只跑指定里程碑，如 M0（可重复）')
         ..addMultiOption('tag', help: '只跑带指定标签的用例（可重复）')
@@ -85,8 +86,9 @@ Future<int> _run(List<String> argv) async {
   );
 
   final VectorRun run;
+  final VectorRegistry registry = buildDefaultRegistry();
   try {
-    run = await VectorRunner(registry: buildDefaultRegistry(), filter: filter).run(suites);
+    run = await VectorRunner(registry: registry, filter: filter).run(suites);
   } on VectorFormatException catch (error) {
     stderr.writeln('✗ 向量自检失败：$error');
     return 2;
@@ -140,6 +142,33 @@ Future<int> _run(List<String> argv) async {
     }
   } else if (!args.flag('quiet')) {
     stdout.writeln('（带筛选条件运行，跳过 pending 基线校验）');
+  }
+
+  // 覆盖检查：已实现的驱动必须至少被一条向量引用。
+  //
+  // 它守的是方案 §7.6 的第一条顺序原则 —— 向量先于实现。反过来的话，
+  // 实现算出什么、测试就接受什么，而报告是全绿的，没有任何迹象表明
+  // 「这个原语从未与任何独立期望值比对过」。
+  //
+  // 只在全量跑时判定：带筛选条件时 usedKinds 天然是子集，
+  // 拿它判覆盖会把每一个没被筛中的 kind 都报成未覆盖。
+  if (args.flag('require-coverage')) {
+    if (!filter.isEmpty) {
+      stdout.writeln('（带筛选条件运行，跳过覆盖检查）');
+    } else if (run.uncoveredKinds.isEmpty) {
+      stdout.writeln('✓ 覆盖检查：${registry.kinds.length} 个驱动全部有向量引用');
+    } else {
+      stdout
+        ..writeln()
+        ..writeln('✗ 覆盖检查：${run.uncoveredKinds.length} 个已实现的驱动没有任何向量引用：')
+        ..writeln(run.uncoveredKinds.map((String k) => '    - $k').join('\n'))
+        ..writeln()
+        ..writeln(
+          '这说明有实现先于向量落地了 —— 也就是「实现算出什么、测试就接受什么」。'
+          '请为它先补上独立生成的期望值（见 test_vectors/README.md），再保留实现。',
+        );
+      code = 1;
+    }
   }
 
   return code;

@@ -92,6 +92,18 @@ scripts:
     description: 用当前实现产出对照表（build/vectors/forged/，不会也不能写回 test_vectors/）
     run: dart run packages/pf_testkit/bin/vector_forge.dart
 
+  # 守住方案 §7.6 的第一条顺序原则：**向量先于实现**。
+  #
+  # 它查的是「有没有一个已实现的驱动，却没有任何向量引用它」—— 这种状态下
+  # 报告是全绿的，因为没有任何一条用例被执行、也就没有任何一条会失败。
+  # 只靠 vector_report 的提醒守不住：提醒在日志里活不过一周。
+  #
+  # 放在关卡 1（单平台）而不是关卡 3（三平台矩阵）：本检查与被测平台无关，
+  # 在矩阵里跑三次只是把同一份结论重复三遍。
+  vectors:coverage:
+    description: 向量覆盖检查（已实现的驱动必须至少被一条向量引用）
+    run: dart run packages/pf_testkit/bin/vector_report.dart --require-coverage --quiet
+
   # ---------- 自定义门禁脚本 ----------
   #
   # 关于下面这几个脚本为什么用 `&&` 串联、而不用 melos 的 `steps:`：

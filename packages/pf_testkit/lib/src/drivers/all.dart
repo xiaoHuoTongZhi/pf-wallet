@@ -11,6 +11,7 @@ import 'm0_id.dart';
 import 'm0_merge.dart';
 import 'm0_money.dart';
 import 'm0_params.dart';
+import 'm1_hkdf.dart';
 import 'm2_crypto.dart';
 
 /// 全部内置驱动。
@@ -37,6 +38,9 @@ List<VectorDriver> defaultVectorDrivers() => const <VectorDriver>[
   MergeResolveDriver(),
   MergeReduceDriver(),
   MergeVersionValidityDriver(),
+  // ---- M1：原语层（纯 Dart，含第三方实现但不需要原生库）----
+  HkdfExtractDriver(),
+  HkdfExpandDriver(),
   // ---- M2：需要原生加密库 ----
   KdfArgon2idDeriveDriver(),
   AeadSealDriver(),

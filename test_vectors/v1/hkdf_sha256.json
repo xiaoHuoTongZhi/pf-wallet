@@ -1,0 +1,259 @@
+{
+  "schemaVersion": 1,
+  "suite": "hkdf_sha256",
+  "title": "HKDF-SHA256 密钥扩展",
+  "description": "RFC 5869 定义的 HKDF，用于把主密钥 MK 扩展成各用途密钥（DBKey 等）。选它是 M1 的第二个原语，理由是它**现在就有独立期望值可依**：RFC 5869 附录 A 给出了三组官方向量，可以用另一套实现（Python 标准库）复算后再抄进这里，而不是等实现写完了让它自己产出期望值。",
+  "cases": [
+    {
+      "id": "kdf.hkdf.extract.rfc5869-case1",
+      "kind": "kdf.hkdf.extract",
+      "title": "RFC 5869 Test Case 1 · 提取阶段",
+      "milestone": "M1",
+      "input": {
+        "saltHex": "000102030405060708090a0b0c",
+        "ikmHex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "prkHex": "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5",
+          "prkLength": 32
+        }
+      },
+      "notes": "RFC 官方用例。PRK 是后续 expand 的唯一输入，所以它自己必须先被钉死：如果 PRK 错而 expand 正好也把错误「一致地」传下去，只测整体输出是看不出来的。",
+      "tags": [
+        "crypto"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.extract.rfc5869-case2",
+      "kind": "kdf.hkdf.extract",
+      "title": "RFC 5869 Test Case 2 · 盐长于 HMAC 块长",
+      "milestone": "M1",
+      "input": {
+        "saltHex": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "ikmHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "prkHex": "06a6b88c5853361a06104c9ceb35b45cef760014904671014a193f40c15fc244",
+          "prkLength": 32
+        }
+      },
+      "notes": "盐 80 字节，已超过 SHA-256 的块长 64 字节。HMAC 对超长密钥的处理是「先做一次摘要再当密钥用」—— 少了这一步，结果会与任何其他实现都不兼容，而且是静默不兼容：本地自测全过，跨设备互换备份时才炸。",
+      "tags": [
+        "crypto"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.extract.rfc5869-case3-empty-salt",
+      "kind": "kdf.hkdf.extract",
+      "title": "RFC 5869 Test Case 3 · 空盐（缺省语义）",
+      "milestone": "M1",
+      "input": {
+        "saltHex": "",
+        "ikmHex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "prkHex": "19ef24a32c717b167f33a91d6f648bdf96596776afdb6377ac434c1c293ccb04",
+          "prkLength": 32
+        }
+      },
+      "notes": "RFC 5869 §2.2 定义 salt 缺省为「HashLen 个 0x00」。本条锁住的是**结果**：空盐得到的 PRK 必须是这一个。补充一句免得有人误以为这里能区分两种读法：HMAC 会把短于块长的密钥补零到块长，所以「空密钥」与「32 个 0x00 字节的密钥」补位后逐字节相同，两种读法必然同值。换言之本条挡不住「把空盐当作空密钥直接塞进非 HMAC 构造」这种改法 ——那种改法由 `hkdf_test.dart` 里的等价性单测挡住。",
+      "tags": [
+        "crypto",
+        "security"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.extract.db-key",
+      "kind": "kdf.hkdf.extract",
+      "title": "真实用途：主密钥 → DBKey 的前半段",
+      "milestone": "M1",
+      "input": {
+        "saltHex": "",
+        "ikmHex": "4242424242424242424242424242424242424242424242424242424242424242"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "prkHex": "b8f58bb59550f5bd61aa8b38d441bb5b00c05ad8c0fafea9fb82d61e55911e8b",
+          "prkLength": 32
+        }
+      },
+      "notes": "本项目里 HKDF 的真实用法：DBKey = HKDF-SHA256(MK, salt=空, info=\"pf/db/1\")。MK 在真实运行时是 32 字节随机数，向量里必须换成固定值 —— 向量不允许有不确定源。写这一条不是为了测 HKDF（上面三条已经测了），而是把「主密钥 → DBKey」这条链路的**确切字节**固定下来：方案 §7.4 说改主密码只需重算 MK 之后这一段，DBKey 不变、数据库一个字节都不用动。那个承诺成立的前提正是这条链表在两侧都算出同一串字节。",
+      "tags": [
+        "crypto",
+        "security"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.expand.rfc5869-case1",
+      "kind": "kdf.hkdf.expand",
+      "title": "RFC 5869 Test Case 1 · 扩展阶段",
+      "milestone": "M1",
+      "input": {
+        "prkHex": "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5",
+        "infoHex": "f0f1f2f3f4f5f6f7f8f9",
+        "length": 42
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "okmHex": "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865",
+          "okmLength": 42,
+          "blocks": 2
+        }
+      },
+      "notes": "与 extract 的 case1 用同一个 PRK，两条合起来就是完整的 HKDF。L=42 不是块长 32 的整数倍，因此它同时钉住了「最后一块要截断」。",
+      "tags": [
+        "crypto"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.expand.rfc5869-case2",
+      "kind": "kdf.hkdf.expand",
+      "title": "RFC 5869 Test Case 2 · 长 info，三块",
+      "milestone": "M1",
+      "input": {
+        "prkHex": "06a6b88c5853361a06104c9ceb35b45cef760014904671014a193f40c15fc244",
+        "infoHex": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        "length": 82
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "okmHex": "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71cc30c58179ec3e87c14c01d5c1f3434f1d87",
+          "okmLength": 82,
+          "blocks": 3
+        }
+      },
+      "notes": "L=82 需要 3 个块，是 RFC 给出的最长输出。计数器从 1 递增到 3，任何「计数器从 0 起」或「计数器写成多字节」的实现都会在这里现形 ——而这类 bug 在 L<=32 的用例里是看不出来的。",
+      "tags": [
+        "crypto"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.expand.rfc5869-case3-empty-info",
+      "kind": "kdf.hkdf.expand",
+      "title": "RFC 5869 Test Case 3 · 空 info",
+      "milestone": "M1",
+      "input": {
+        "prkHex": "19ef24a32c717b167f33a91d6f648bdf96596776afdb6377ac434c1c293ccb04",
+        "infoHex": "",
+        "length": 42
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "okmHex": "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8",
+          "okmLength": 42,
+          "blocks": 2
+        }
+      },
+      "notes": "info 为空就是**空**，不做任何填充、也不退化成零字节串。注意这与 salt 的缺省语义相反：salt 空有定义好的替代值（32 个 0x00），info 空没有。把两者都按「补零」处理，是一条很自然的错误直觉。",
+      "tags": [
+        "crypto"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.expand.db-key",
+      "kind": "kdf.hkdf.expand",
+      "title": "真实用途：主密钥 → DBKey 的后半段",
+      "milestone": "M1",
+      "input": {
+        "prkHex": "b8f58bb59550f5bd61aa8b38d441bb5b00c05ad8c0fafea9fb82d61e55911e8b",
+        "infoHex": "70662f64622f31",
+        "length": 32
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "okmHex": "a066fff5d232662a27af2fcca1cc6b5eb05f281ebfae180627cc65eda78df52a",
+          "okmLength": 32,
+          "blocks": 1
+        }
+      },
+      "notes": "接着上面 extract 那一条，输出 32 字节 DBKey。info 是 UTF-8 编码后的 \"pf/db/1\"（7 字节）—— 用的是**字节**而非字符串，因为 info 一旦按不同平台/版本的编码规则处理，同一句话就会派生出不同的密钥，而错误只会在跨设备导入时暴露。",
+      "tags": [
+        "crypto",
+        "security"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.expand.single-byte",
+      "kind": "kdf.hkdf.expand",
+      "title": "边界：最短输出 L=1",
+      "milestone": "M1",
+      "input": {
+        "prkHex": "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5",
+        "infoHex": "",
+        "length": 1
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "okmHex": "b2",
+          "okmLength": 1,
+          "blocks": 1
+        }
+      },
+      "notes": "L 的最小合法值是 1。它锁住「输出是第一块的前缀」这件事，顺带挡住「输出长度不足一块时补零到一块」这类会把长度搞错的实现。",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.expand.two-block-boundary",
+      "kind": "kdf.hkdf.expand",
+      "title": "边界：跨块 L=33",
+      "milestone": "M1",
+      "input": {
+        "prkHex": "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5",
+        "infoHex": "70662f64622f31",
+        "length": 33
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "okmHex": "9f5b2c3e9bb47f9e0dcf5df63b56a87bffffc843527c15cbfbb17433ca7b4ddc3e",
+          "okmLength": 33,
+          "blocks": 2
+        }
+      },
+      "notes": "L=33 只比一个块多 1 个字节，是最省字数的「跨块」用例：它要求第 2 个块确实被算出来、且只取头 1 个字节。第 2 块的输入是 T(1) | info | 0x02 —— 少传 T(1) 或多传一个零字节都会在这里失败。",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.hkdf.expand.exact-two-blocks",
+      "kind": "kdf.hkdf.expand",
+      "title": "边界：恰好两块 L=64",
+      "milestone": "M1",
+      "input": {
+        "prkHex": "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5",
+        "infoHex": "",
+        "length": 64
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "okmHex": "b2a3d45126d31fb6828ef00d76c6d54e9c2bd4785e49c6ad86e327d89d0de9408eeda1cbef2b03f30e053d5be784c2ab37f5a4de412baa10f01f456e9772aae7",
+          "okmLength": 64,
+          "blocks": 2
+        }
+      },
+      "notes": "L=64 是块长的整数倍，最后一块**不截断**。与上一条配对，才能把「截断逻辑」与「计数逻辑」分开定位：只测 L=33 的话，一处多留一个字节的实现会同时被截断和长度两个原因抓住。",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    }
+  ]
+}

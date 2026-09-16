@@ -29,6 +29,17 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 它的头部写明「期望值必须能被独立推导与人工审阅，不能变成跑一遍脚本让实现自己写答案」。
 `build/` 被 `.gitignore` 忽略正好落实了这个决定，不需要改。
 
+> **别把这条与 `tools/golden_vectors_gen/` 搞混**（2026-09-16 补注）。
+> 两者是相反的：
+>
+> | | `build/_gen/gen_vectors.py`（不入库） | `tools/golden_vectors_gen/*.py`（入库） |
+> |---|---|---|
+> | 期望值从哪来 | 跑一遍**本仓实现**、把它吐出来的东西写进 `expect` | **另一套实现**（Python 标准库 / `cryptography`）／标准文档 |
+> | 为什么不入库 / 为什么入库 | 入库等于把「实现给自己出考卷」这件事合法化 | 入库是为了让「这串十六进制怎么来的」永远有可执行答案 |
+> | 判定代价 | 实现改成什么样，向量就跟着变成什么样 | 实现改坏时向量不变，于是变红 |
+>
+> 判据很简单：**脚本里有没有 `import` 本仓的代码**。有 → 它生成的不是期望值，是快照。
+
 ### 0.2 改动的既有文件
 
 | 文件 | 改动 |
@@ -56,16 +67,25 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 > 补上「没有任何一关在回答『哪些路径被提交了』」这个盲区。
 > 规则、白名单与失败时怎么分诊见 **§3 的「P1 · 入库路径检查」**；
 > 关卡 1 的步骤表见 **§2.1**。
+>
+> **M1 第二个原语追加（2026-09-16）**：`pf_crypto` 落地 **HKDF-SHA256**
+> （`src/hkdf.dart`：`KeyExpander` 契约 + `HkdfSha256`），
+> 并新增 **第五条门禁 向量覆盖检查**（`vectors:coverage`，gate1 再加一个步骤），
+> 堵住「先写实现、后补向量」这条会全绿通过的路径。
+> 期望值来自 `tools/golden_vectors_gen/hkdf_sha256.py`（Python 标准库独立复算 +
+> `cryptography` 交叉核对 + RFC 5869 附录 A 逐字对照），生成脚本入库、可重跑。
+> 分诊见 **§3 的「P1 · 向量覆盖检查」**。
 
 ### 0.3 本机复检结果（改动后）
 
 ```
-format     Formatted 81 files (0 changed)        ← M0 当时 76；判定线是 0 changed
+format     Formatted 84 files (0 changed)        ← M0 当时 76；判定线是 0 changed
 analyze    No issues found!                      （--fatal-infos --fatal-warnings）
 guards     6 项检查，error=0 warning=13          （deps 11 / manifest 2，均为刻意保留）
-test       340 项，全通过：
-             pf_core 91 / pf_crypto 72 / pf_data 19 / pf_io 23 / pf_testkit 55 / guards 80
-vectors    98 条通过，失败 0，待实现 0，判定摘要 f573cf9de746…（与上一版逐字符相同）
+test       368 项，全通过：
+             pf_core 91 / pf_crypto 98 / pf_data 19 / pf_io 23 / pf_testkit 57 / guards 80
+vectors    109 条通过，失败 0，待实现 0，判定摘要 aec08f7118a0…
+vectors:cov 27 个驱动全部有向量引用（反例：--vectors 指向单个套件 → 退出码 1，列出 21 个）
 新增工具    assert_test_report.dart 三条分支（0/1/2）逐一实测通过
 ```
 
@@ -74,8 +94,18 @@ vectors    98 条通过，失败 0，待实现 0，判定摘要 f573cf9de746…�
 > `tracked_paths_test.dart` 16 条 + `guards_test.dart` 的 3 条集成用例。
 > `79 → 81` 与 `pf_crypto 57 → 72` 是同日下午落地第一个加密原语
 > （`src/digest.dart`：摘要契约 + SHA-256）带来的，`+15` 项测试 = `digest_test.dart`。
+> 之后第二个原语 `src/hkdf.dart`（HKDF-SHA256）带来 `81 → 84`
+> （新文件 `hkdf.dart` / `test/hkdf_test.dart` / `drivers/m1_hkdf.dart`；
+> 生成脚本是 `.py`，不计入 `dart format`）、`pf_crypto 72 → 98`（+26 条 `hkdf_test.dart`）、
+> `pf_testkit 55 → 57`（+2 条，覆盖检查的 `uncoveredKinds`）、
+> 向量 `98 → 109`（+11 条 `hkdf_sha256`）。
 > 记录它是因为数字会一直变，而**判定线不变** —— 追数字本身没有意义，
 > 有意义的是知道「它为什么变了」。
+>
+> `verdictDigest` 从 `f573cf9de746…` 变成 `aec08f7118a0…` 是**必然**的：
+> 它覆盖「用例 ID + 状态」，新增 11 条用例就会变。
+> 所以「摘要与上一版相同」只在向量集合没变时才有意义；
+> 向量集合变了以后，判据是「失败 0 / 待实现 0」与「三平台摘要彼此相同」。
 
 只在本机做过一次、CI 上会重做的关键验证：`dart pub global activate melos 6.3.2`
 在本机成功（6.3.3 失败，见 §3 P0-1）。
@@ -395,16 +425,18 @@ PY
 | 安装 melos | `melos 可执行目录：/home/runner/.pub-cache/bin` 且 `ls` 列出 `melos` |
 | 解析工作区依赖 | `flutter pub get` 成功；根目录生成唯一 `pubspec.lock` |
 | 打印工具版本 | `melos --version` → **6.3.2**（见 §3 P0-1：写成 6.3.3 这一步就红） |
-| 检查格式 | `Formatted 79 files (0 changed)`（M0 当时是 76；判定线是 `0 changed`，不是这个数字） |
+| 检查格式 | `Formatted 84 files (0 changed)`（M0 当时是 76；判定线是 `0 changed`，不是这个数字） |
 | 静态分析 | 每个包 `No issues found!` |
 | 六个 guards | 每项 `error=0`（`deps` / `banned-api` / `logging` / `manifest` / `version` / `tracked-paths`） |
+| 向量覆盖检查 | `✓ 覆盖检查：27 个驱动全部有向量引用`（见 §3 的「P1 · 向量覆盖检查」） |
 | 上传门禁报告 | artifact `guards-report-<sha>`，内含 `deps/banned-api/logging/manifest/version/tracked-paths.json` |
 
-失败时最常见的四条：格式不一致（本机没跑 `dart format` 就提交）、
+失败时最常见的五条：格式不一致（本机没跑 `dart format` 就提交）、
 `guards:version`（改了 `PfBuildInfo.appVersion` 忘了改 pubspec）、
 `guards:deps`（加了新的传递依赖未登记）、
 `guards:tracked-paths`（把不该入库的文件加进了索引，或新增了未登记的区域 ——
-见 §3 的「P1 · 入库路径检查」）。
+见 §3 的「P1 · 入库路径检查」）、
+`vectors:coverage`（写了驱动与实现，但没写向量 —— 见 §3 的「P1 · 向量覆盖检查」）。
 
 ### 2.2 gate2-test.yml · 三平台矩阵
 
@@ -420,7 +452,7 @@ PY
 
 | 步骤 | 预期 |
 |---|---|
-| 运行单元测试（含覆盖率） | 305 条全过（其中 pf_mobile 3 条走 flutter_tester）；产出 `**/coverage/lcov.info` |
+| 运行单元测试（含覆盖率） | 390 条全过（其中 `pf_mobile` 3 条走 flutter_tester）；产出 `**/coverage/lcov.info`。<br>分解：pf_core 91 / pf_crypto 98 / pf_data 19 / pf_io 23 / pf_testkit 57 / guards 80 / pf_ui 19 / pf_mobile 3 |
 | 运行移动端 widget 测试（JSON 协议报告） | `apps/pf_mobile` 下产出 `build/test-reports/pf_mobile.jsonl`（JSON Lines，每行一个事件） |
 | 断言 widget 测试确实执行 | 输出「执行并通过 3 / 失败 0 / 跳过 0 / 合成 1」+ 三条 `✓` |
 | 上传移动端测试报告 | artifact `mobile-widget-report-<os>-<sha>` |
@@ -435,14 +467,14 @@ PY
 
 | 作业 | 平台 | 预期 |
 |---|---|---|
-| `golden-vectors` | 三平台矩阵，`fail-fast: false` | 每平台 `向量 98 条：通过 98，失败 0，待实现 0`，上传 artifact `vectors-report-<os>-<sha>`（保留 30 天） |
+| `golden-vectors` | 三平台矩阵，`fail-fast: false` | 每平台 `向量 109 条：通过 109，失败 0，待实现 0`，上传 artifact `vectors-report-<os>-<sha>`（保留 30 天） |
 | `verdict-consistency` | ubuntu，`needs: [golden-vectors]` | 下载三个 artifact 到 `reports/`，跑 `python3 tools/ci/compare_verdicts.py reports` |
 
 `verdict-consistency` 的三种结果，含义完全不同：
 
 | 输出 | 退出码 | 含义 |
 |---|---|---|
-| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位，应与本机一致（M0 为 `f573cf9de746`） |
+| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位。**不要拿它与上一个版本比对**：摘要覆盖「用例 ID + 状态」，新增/删除向量必然改变它（M0 时 98 条 → `f573cf9de746`；补入 `hkdf_sha256` 后 109 条 → `aec08f7118a0`）。有意义的是「三个平台彼此相同」 |
 | `✗ 只找到 1 份报告，无法做跨平台比对` | 2 | **接线问题**，不是代码问题：`upload-artifact` 的 `name` 与 `download-artifact` 的 `pattern` 对不上，或 matrix 少跑了一个平台。这条被刻意做成失败而不是跳过 —— 「只跑了一个平台」不该被当成「三个平台一致」 |
 | `✗ 跨平台判定不一致。逐条对比：` | 1 | **真的有平台差异**。报告会逐条列出 `用例 ID: 平台A=pass vs 平台B=fail` |
 
@@ -762,6 +794,59 @@ git status --short                                  # 期望只剩你本来要�
 **没有 git 时怎么办**：这条检查会以退出码 2 失败，这是刻意的 ——
 一个「读不到索引就跳过」的门禁等于在最需要它的地方（CI 的干净 checkout）没有存在感。
 若你确实在一个没有 `.git` 的源码快照里跑 `guards all`，单独跑其余五项即可。
+
+### P1 · 向量覆盖检查（`vectors:coverage`）失败 —— 通常是「有实现、没向量」
+
+**症状**：
+
+```
+✗ 覆盖检查：N 个已实现的驱动没有任何向量引用：
+    - kdf.hkdf.expand
+    - ...
+这说明有实现先于向量落地了 —— 也就是「实现算出什么、测试就接受什么」。
+```
+
+**它为什么必须是一条会失败的门禁**（而不是一句提醒）：
+`vector_report.dart` 早就把「驱动已实现但无人引用」打成 warning 了，
+但 warning 的处境很尴尬 —— 在 CI 日志里它只出现一次，
+而**这一种状态下整个报告是全绿的**：没有用例被执行，自然没有用例失败。
+于是「先写实现、后补向量」可以一路绿灯通过三关卡，
+而向量已经悄悄退化成实现的快照。
+
+**分诊：先分清「漏写向量」与「kind 拼错」**
+
+| 现象 | 含义 | 动作 |
+|---|---|---|
+| 报的 kind 是**你这次新加的**，向量文件里找不到对应 `kind` | 漏写向量（或 `kind` 拼写与驱动不一致） | 按 `test_vectors/README.md` 补向量；期望值必须来自独立实现／标准文档，不能跑一遍本实现抄回来 |
+| 报的 kind 是**别人加的**，且你只是改了这一条 | 大概率与本次改动无关 —— 检查一下是不是把某个向量文件误删/改名了 | `git status` 看 `test_vectors/` 下有没有消失的文件 |
+| 报的是 `*.extract` 却写着 `*.derive` | 驱动的 `kind` 与向量的 `kind` 之间只差一个词 | 改其中一处，并想清楚契约名应该是哪个 —— 名字一旦被向量引用就不该再改 |
+
+**本机复现（含反例）**：
+
+```bash
+cd D:/workbuddy/pf-wallet
+export PATH="/c/Program Files/Git/cmd:/c/Program Files/Git/usr/bin:$PATH"
+DART=/c/Users/huoyu/.workbuddy/binaries/flutter/flutter/bin/cache/dart-sdk/bin/dart.exe
+
+# 正例：当前应当 PASS
+melos run vectors:coverage
+
+# 反例：只喂一个套件，其余 26 个已实现驱动都会变成「无人引用」
+#      这一步不需要改任何代码，也不会污染 test_vectors/
+T="D:/workbuddy/.workbuddy/tmp/vonly"
+mkdir -p "$T" && cp test_vectors/v1/container_trailer.json "$T/"
+"$DART" run packages/pf_testkit/bin/vector_report.dart --vectors "$T" --require-coverage --quiet
+echo "exit=$?"        # 期望 exit=1，并列出 21 个未覆盖的 kind
+rm -rf "$T"
+```
+
+**能力边界（明确，不夸大）**：它只能查「有没有向量」，查不了
+「期望值是不是独立生成的」—— 后者没有机器判据，
+只能由 review 与生成脚本的可重跑性共同保证
+（`tools/golden_vectors_gen/` 下的脚本第一件事就是把自己和标准文档对齐，对不上直接退出）。
+
+**带筛选条件运行时会跳过本检查**：`--kind` / `--tag` 等参数下 `usedKinds` 天然是子集，
+拿它判覆盖会把每一个没被筛中的 kind 都误报成未覆盖。这一点在执行时会打印提示。
 
 ### P1 · 行尾 CRLF 让关卡 1 在 Linux 上失败
 

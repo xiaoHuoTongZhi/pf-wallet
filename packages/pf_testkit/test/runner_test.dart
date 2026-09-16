@@ -318,6 +318,60 @@ void main() {
 
       expect(run.warnings.join('\n'), isNot(contains('m2.kind')));
     });
+
+    // uncoveredKinds 是 `vector_report.dart --require-coverage` 的判定依据，
+    // 也就是「向量先于实现」这条顺序原则的机器执行者。
+    // 它必须比 warning 严格：warning 只打印，本字段会让门禁变红。
+    test('已实现但没向量引用的 kind 进入 uncoveredKinds（并排序）', () async {
+      final run = await VectorRunner(
+        registry: VectorRegistry(<VectorDriver>[
+          _ScriptedDriver(
+            'demo.kind',
+            (Map<String, Object?> input) async =>
+                const VectorOutcome.value(<String, Object?>{'v': 1}),
+          ),
+          _ScriptedDriver(
+            'zzz.unused',
+            (Map<String, Object?> input) async =>
+                const VectorOutcome.value(<String, Object?>{'v': 1}),
+          ),
+          _ScriptedDriver(
+            'aaa.unused',
+            (Map<String, Object?> input) async =>
+                const VectorOutcome.value(<String, Object?>{'v': 1}),
+          ),
+          _ScriptedDriver(
+            'm2.pending',
+            (Map<String, Object?> input) async =>
+                const VectorOutcome.value(<String, Object?>{'v': 1}),
+            implemented: false,
+          ),
+        ]),
+      ).run(<PfVectorSuite>[
+        _suite(<PfVectorCase>[_case()]),
+      ]);
+
+      // 未实现的 m2.pending 不算「缺向量」—— 它的向量本来就还没到。
+      // 若把它也算进去，覆盖检查会从第一天起就常红，然后被所有人忽略。
+      expect(run.uncoveredKinds, <String>['aaa.unused', 'zzz.unused']);
+    });
+
+    test('全部驱动都被引用 → uncoveredKinds 为空', () async {
+      final run = await VectorRunner(
+        registry: VectorRegistry(<VectorDriver>[
+          _ScriptedDriver(
+            'demo.kind',
+            (Map<String, Object?> input) async =>
+                const VectorOutcome.value(<String, Object?>{'v': 1}),
+          ),
+        ]),
+      ).run(<PfVectorSuite>[
+        _suite(<PfVectorCase>[_case()]),
+      ]);
+
+      expect(run.uncoveredKinds, isEmpty);
+      expect(run.warnings, isEmpty);
+    });
   });
 
   group('筛选与报告', () {

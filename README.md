@@ -9,8 +9,16 @@
 ## 当前阶段：M1（数据与加密打通）
 
 M0（骨架与门禁）已完成并通过 CI，验收清单见 `docs/M0_ACCEPTANCE.md`。
-M1 按方案 §7.6 的顺序推进，当前落在**第一步：`pf_crypto` 原语层**
-（摘要 / HKDF-SHA256 / AES-256-GCM / Argon2id 的实装）。
+M1 按方案 §7.6 的顺序推进，当前落在**第一步：`pf_crypto` 原语层**。
+四个原语里已完成两个（顺序按「有没有独立期望值可用」排）：
+
+| 原语 | 状态 | 期望值来源 |
+|---|---|---|
+| 摘要（SHA-256） | ✅ 已落地 | FIPS / NIST 公开向量 + Python `hashlib` 复算 |
+| HKDF-SHA256 | ✅ 已落地 | RFC 5869 附录 A + Python 标准库 / `cryptography` 双实现复算 |
+| AES-256-GCM | ⬜ 未开工 | 需先用 Python `cryptography` 生成向量（先向量、后实现） |
+| Argon2id | ⬜ 未开工 | 同上；且原生库（libsodium）的供给方案未定，见 §7.6 |
+
 容器编解码器、Keyring 实装、SQLCipher 打开流程仍在后面，尚未开工。
 
 ---
@@ -37,13 +45,15 @@ pf-wallet/
 │   ├── pf_ui/                   双端共享的主题令牌（含自定义配色）
 │   └── pf_testkit/              黄金测试向量框架（驱动接口 + 运行器 + 报告）
 ├── tools/
-│   └── guards/                  自定义 CI 门禁脚本（依赖黑名单等）
+│   ├── guards/                  自定义 CI 门禁脚本（依赖黑名单等）
+│   └── golden_vectors_gen/      黄金向量的**独立**生成脚本（Python，可重跑）
 ├── test_vectors/
 │   ├── schema/vector.schema.json  向量 JSON Schema（draft 2020-12）
 │   ├── v1/*.json                  向量数据
-│   └── skip_baseline.json         允许跳过的向量 kind 白名单
+│   └── pending_baseline.json      允许处于 pending 的用例 ID（只减不增）
 └── docs/
-    └── M0_ACCEPTANCE.md         M0 验收清单
+    ├── M0_ACCEPTANCE.md         M0 验收清单
+    └── M0_CI_RUNBOOK.md         CI 排障手册
 ```
 
 ---
@@ -104,6 +114,8 @@ melos run ci:gate3     # 黄金向量
 | `melos run test` | 全包单元测试 |
 | `melos run vectors` | 跑黄金向量并输出 `build/vectors/report.json` |
 | `melos run vectors:pending` | 列出尚未实现的向量（M1/M2 待办） |
+| `melos run vectors:coverage` | 向量覆盖检查：已实现的驱动必须至少被一条向量引用（守「向量先于实现」） |
+| `melos run vectors:forge` | 用当前实现产出对照表（只能写 `build/`，不会也不能写回 `test_vectors/`） |
 | `melos run guards` | 全部自定义门禁 |
 | `melos run guards:deps` | 只跑依赖黑名单检查 |
 | `melos run guards:tracked-paths` | 只跑入库路径检查（读 `git ls-files`，须在 git 仓库里跑） |
