@@ -1,8 +1,9 @@
 /// PF Wallet 移动端入口。
 ///
-/// ## M0 阶段这个文件刻意很空
+/// ## 这个文件刻意很空
 ///
-/// 现在的它只做三件事：建主题、显示构建信息、说明「功能还没上线」。
+/// 现在的它只做四件事：建主题、显示构建信息、说明「功能还没上线」，
+/// 以及提供一个**上锁的**记账入口（见文件末尾的 `bottomNavigationBar`）。
 /// 之所以先把它跑起来而不是留空目录，是因为「工程骨架能否构建」
 /// 本身就是一条需要在 CI 上被持续验证的事实 ——
 /// 等到 M3 才发现 Flutter 版本、analyze 规则或工作区依赖有问题，
@@ -11,11 +12,14 @@
 /// 明确不做的事（避免后来者以为漏了）：
 ///   - 不做任何初始化时序（解锁流程尚未设计定型，先写等于先写错）
 ///   - 不接任何平台插件
-///   - 不做路由骨架（页面结构要等数据层定下来再定）
+///   - 不做路由骨架。M1 起有且只有**一条**导航：
+///     「记一笔」→ 上锁的占位页。真正的页面结构要等数据层定下来再定，
+///     现在铺开就等于现在重新铺一次。
 library;
 
 import 'package:flutter/material.dart';
 import 'package:pf_core/pf_core.dart';
+import 'package:pf_mobile/unlock_page.dart';
 import 'package:pf_ui/pf_ui.dart';
 
 void main() {
@@ -97,6 +101,37 @@ class BuildStatusPage extends StatelessWidget {
             style: TextStyle(color: palette.onSurfaceVariant, height: 1.6),
           ),
         ],
+      ),
+      // ---------------------------------------------------------------------
+      // 记账入口就放在底部，且**只有这一个**
+      // ---------------------------------------------------------------------
+      // 位置选底部而不是 AppBar 或列表项，四条理由：
+      //   ① 移动端记账的主操作就在底部（或右下悬浮），用户预期一致；
+      //   ② 改动量最小 —— 用 Scaffold 的底部插槽，现有 ListView 结构、
+      //      AppBar、列表项一行都不用动；
+      //   ③ 它天然是个「占位入口」：底部一条按钮不暗示任何数据通路，
+      //      而一个列表项或卡片式的入口会让人以为点进去能看到账目结构；
+      //   ④ M1 真正做记账页时这个位置不用迁移，换掉跳转目标即可。
+      //
+      // 它现在指向的 UnlockPage 是一个**不会解锁任何东西**的占位页 ——
+      // 这是刻意的，理由见 unlock_page.dart 的库注释。
+      // 这两条（入口存在 + 点进去没有账目字段）由 test/smoke_test.dart
+      // 的第三条用例守着；CI 关卡 2 的第 9 步会核对那条用例确实执行了。
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(PfSpacing.lg),
+          child: SizedBox(
+            height: PfSpacing.tapTarget,
+            width: double.infinity,
+            child: FilledButton(
+              onPressed:
+                  () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(builder: (BuildContext context) => const UnlockPage()),
+                  ),
+              child: const Text('记一笔'),
+            ),
+          ),
+        ),
       ),
     );
   }
