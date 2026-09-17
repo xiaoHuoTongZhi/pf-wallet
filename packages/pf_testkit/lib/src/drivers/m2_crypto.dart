@@ -1,6 +1,6 @@
-/// 驱动：Argon2id（已实装，纯 Dart）与 Keyring（待实装）。
+/// 驱动：Argon2id（已实装，纯 Dart）。
 ///
-/// ## 为什么「未实现」的驱动也要写出来
+/// ## 为什么「未实现」的驱动也要写出来（历史备注）
 ///
 /// 因为向量必须先于实现存在。原因有两条，都是工程性的：
 ///
@@ -17,7 +17,10 @@
 /// RFC 9106），**零原生依赖** —— 6 平台一致，也能在 `dart test` 的 CI 上跑。
 /// 因此保留在本文件只是历史位置；它的 [plannedMilestone] 已是 M1。
 ///
-/// Keyring 仍待实装（对接 flutter_secure_storage），保持 pending。
+/// Keyring 的驱动已按 §3.1 的层级拆成五个 kind，见 `m2_keyring.dart`。
+/// 本文件最初占位的 `keyring.wrap-dek`（KEK 包 DEK 的笼统记法）随之移除 ——
+/// 规格定稿后不存在这个块：密码路径靠 keyCheck 校验，MK 的包裹只发生在
+/// 恢复码（RK 包 MK）与生物识别（DeviceKey 包 MK，需平台 Keystore，见 M2）。
 library;
 
 import 'package:pf_core/pf_core.dart';
@@ -26,25 +29,6 @@ import 'package:pf_crypto/pf_crypto.dart';
 import '../driver.dart';
 import '../json_util.dart';
 import '../outcome.dart';
-
-/// 未实现驱动的公共实现：声明契约，但拒绝假装能跑。
-abstract class _PendingDriver extends VectorDriver {
-  const _PendingDriver();
-
-  @override
-  bool get isImplemented => false;
-
-  @override
-  String get plannedMilestone => 'M2';
-
-  @override
-  Future<VectorOutcome> run(Map<String, Object?> input) async => VectorOutcome.pending(
-    message:
-        '$kind 的实现尚未落地。'
-        '若这条消息出现在 M2 之后，说明有人把 isImplemented 打开了却没写实现 —— '
-        '这正是 pending 基线机制要拦住的情况。',
-  );
-}
 
 /// Argon2id 派生。
 ///
@@ -85,23 +69,4 @@ final class KdfArgon2idDeriveDriver extends VectorDriver {
     );
     return VectorOutcome.value(<String, Object?>{'derivedKeyHex': toHex(derived)});
   }
-}
-
-/// 密钥环：用 KEK 包裹 DEK。
-final class KeyringWrapDriver extends _PendingDriver {
-  const KeyringWrapDriver();
-
-  @override
-  String get kind => 'keyring.wrap-dek';
-
-  @override
-  String get description => '用主密码派生的 KEK 包裹数据密钥 DEK（改密码只需重包，无需重加密数据库）';
-
-  @override
-  Map<String, String> get inputContract => const <String, String>{
-    'kekHex': '32 字节 KEK',
-    'dekHex': '32 字节 DEK',
-    'deviceIdHex': '16 字节设备 ID',
-    'params': '{m, t, p, saltLength, outputLength}',
-  };
 }

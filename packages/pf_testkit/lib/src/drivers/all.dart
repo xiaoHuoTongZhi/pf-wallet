@@ -14,6 +14,7 @@ import 'm0_params.dart';
 import 'm1_aesgcm.dart';
 import 'm1_hkdf.dart';
 import 'm2_crypto.dart';
+import 'm2_keyring.dart';
 
 /// 全部内置驱动。
 List<VectorDriver> defaultVectorDrivers() => const <VectorDriver>[
@@ -39,14 +40,17 @@ List<VectorDriver> defaultVectorDrivers() => const <VectorDriver>[
   MergeResolveDriver(),
   MergeReduceDriver(),
   MergeVersionValidityDriver(),
-  // ---- M1：原语层（纯 Dart，含第三方实现但不需要原生库）----
+  // ---- M1：原语层与编排层（纯 Dart，含第三方实现但不需要原生库）----
   HkdfExtractDriver(),
   HkdfExpandDriver(),
   AeadSealDriver(),
   AeadOpenDriver(),
-  // ---- M2：需要原生加密库 ----
   KdfArgon2idDeriveDriver(),
-  KeyringWrapDriver(),
+  KeyringDbKeyDeriveDriver(),
+  KeyringKeyCheckSealDriver(),
+  KeyringKeyCheckOpenDriver(),
+  KeyringRecoveryWrapDriver(),
+  KeyringRecoveryUnwrapDriver(),
 ];
 
 /// 标准注册表。

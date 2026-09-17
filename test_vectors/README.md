@@ -83,19 +83,22 @@ test_vectors/
 | `hkdf_sha256` | HKDF-SHA256 的提取/扩展两阶段、缺省语义、块边界（RFC 5869 + 真实用途 MK→DBKey） |
 | `aes256gcm` | AES-256-GCM（NIST SP 800-38D）：96 位 nonce 主路径、非 96 位 nonce 边界（8 / 16 字节）、空明文 / 单字节明文 / AAD，以及三类认证失败（标签篡改 / 密文篡改 / AAD 不符）必须抛 `PFB_E_AUTH_FAILED` |
 | `argon2id` | Argon2id（RFC 9106，version 0x13）派生：§3.2 三档（P_DEFAULT / P_STRONG / P_MIN）、盐长度边界（8 / 32 字节），以及 m/t/p 超上限（`PFB_E_KDF_PARAMS`）与输入契约破坏（密码空 / 盐长不符 → `PFB_E_HEADER_INVALID`） |
+| `keyring` | §3.1 密钥层级编排：MK → DBKey（HKDF info="pf/db/1"）、keyCheck 生成/校验（固定明文 `PF:KEYCHECK:v1`、AAD `pf-keycheck-v1|cfgVersion|installId`）、恢复码包裹/解包（AAD `pf-recovery-v1|cfgVersion`），错误分支 `PFK_E_WRONG_PASSWORD` / `PFK_E_WRONG_RECOVERY_CODE` / `PFK_E_TAMPERED` |
 
 AES-256-GCM 的驱动（`m1_aesgcm.dart`）与 Argon2id 的驱动
 （`m2_crypto.dart`，历史位置，实为纯 Dart、里程碑 M1）均已实现并入库。
 AES 向量由 `tools/golden_vectors_gen/aes256gcm.py` 生成
 （NIST GCMVS 锚点 + `cryptography` / `pycryptodome` 双实现复算）；
 Argon2id 向量由 `tools/golden_vectors_gen/argon2id.py` 生成
-（Python `argon2-cffi` 独立复算，RFC 9106 §5.3 的带 K/AD 锚点由 Dart 单测验证）。
+（Python `argon2-cffi` 独立复算，RFC 9106 §5.3 的带 K/AD 锚点由 Dart 单测验证）；
+Keyring 向量由 `tools/golden_vectors_gen/keyring.py` 生成
+（Python 标准库 hmac 手拼 HKDF × `cryptography` 交叉核对，AES-GCM 走
+`cryptography` × `pycryptodome` 双实现）。
 
-**仅剩 `keyring.wrap-dek` 尚未入库。** 原因不是没时间，而是：
-它的期望值必须由独立的参考实现生成，且它依赖 `flutter_secure_storage`
-（属于 M2 的 Keyring 工作，本次刻意不碰）。先摆一个空壳占位会得到一个
-「看起来覆盖了、实际什么都没测」的假绿灯 —— 那比缺覆盖危险得多。
-驱动已注册、`kind` 契约已固定，M2 落地时把 `isImplemented` 翻成 `true` 并补向量即可。
+**全部 31 个驱动均已实现、均有向量引用，pending 为 0。**
+有状态 Keyring 服务（初始化 / 解锁 / 失败计数 / 对接 flutter_secure_storage）
+不在向量体系内 —— 它的本质是平台与 UI 编排，属于 M2；
+其依赖的纯组合规则（本目录的 `keyring` 套件）已被锁死。
 
 ## 怎么跑
 

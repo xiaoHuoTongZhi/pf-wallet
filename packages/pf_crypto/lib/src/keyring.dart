@@ -42,6 +42,15 @@
 ///
 /// 正确做法是：**包裹块本身就是校验器**。KEK 能否解开 DEK 的 AES-GCM 标签，
 /// 就是密码是否正确的唯一判据。没有多余的哈希，就没有多余的攻击面。
+///
+/// ## 与方案 §3.1 / §3.5.1 的对应关系（M1 已把编排层落地）
+///
+/// 本文件写于 M0，用的是 KEK/DEK 两层记号；方案 §3.1 定稿后记号更细：
+/// KEK 对应 **MK**（Argon2id 的直接输出），DEK 对应 **DBKey**（`HKDF(MK, info="pf/db/1")`）。
+/// 两层的组合规则已由 [KeyringCore] 实现并被向量锁死；本文件的
+/// [Keyring] / [KeyringStore] 是其上方的**有状态服务**契约
+/// （初始化、解锁、失败计数、指数退避），其默认实装需要
+/// flutter_secure_storage 才能落地 —— 在那之前，App 层直接使用 [KeyringCore]。
 library;
 
 import 'dart:typed_data';

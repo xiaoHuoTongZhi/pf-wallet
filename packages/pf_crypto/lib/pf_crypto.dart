@@ -12,8 +12,10 @@
 ///   - [KeyExpander] / [HkdfSha256]：密钥扩展原语（已落地）
 ///   - [Aes256Gcm]：AES-256-GCM 实装（已落地）
 ///   - [Argon2idDeriver]：Argon2id 实装（已落地）
-///   - **不含**容器编解码器（编排 KDF → AEAD → 摘要 → 原子写盘）
-///     与 [Keyring] 实装（对接 flutter_secure_storage）—— 那是 M1 后续与 M2 的事
+///   - [KeyringCore]：§3.1 密钥层级的编排核心 MK → DBKey → keyCheck →
+///     恢复码包裹（已落地，纯函数组合，全部规则被向量锁死）
+///   - **不含**有状态的 [Keyring] 实装（初始化 / 解锁 / 失败计数 /
+///     对接 flutter_secure_storage）—— 那是 M2 的事
 ///
 /// ## 算法从哪来
 ///
@@ -47,3 +49,4 @@ export 'src/digest.dart';
 export 'src/hkdf.dart';
 export 'src/kdf.dart';
 export 'src/keyring.dart';
+export 'src/keyring_core.dart';

@@ -53,6 +53,9 @@ abstract final class PfErrorCode {
   /// 主密码校验失败。
   static const String keyringWrongPassword = 'PFK_E_WRONG_PASSWORD';
 
+  /// 恢复码校验失败（recovery.blob 的认证标签对不上）。
+  static const String keyringWrongRecoveryCode = 'PFK_E_WRONG_RECOVERY_CODE';
+
   /// 尚未初始化主密码（首次启动）。
   static const String keyringAbsent = 'PFK_E_NO_KEYRING';
 
@@ -225,6 +228,18 @@ final class KeyringError extends PfError {
             ? '主密码不正确，还可以再试 $remainingAttempts 次。'
                 '密码无法找回，请确认后重试。'
             : '主密码不正确。密码无法找回、无法重置，请使用恢复码或仔细核对后重试。',
+  );
+
+  /// 恢复码错误。
+  ///
+  /// 与 [wrongPassword] 分开编码：两者对用户的下一步动作不同
+  /// （核对抄写 / 重输密码），App 层按码分支，不能靠 message 字符串猜。
+  static KeyringError wrongRecoveryCode() => const KeyringError(
+    code: PfErrorCode.keyringWrongRecoveryCode,
+    message: '恢复码包裹块认证失败',
+    userMessage:
+        '恢复码不正确。请逐组核对大小写（大小写不敏感）与易混字符后重试；'
+        '若恢复码已重新生成过，旧码会立即失效。',
   );
 
   /// 尚未设置主密码。

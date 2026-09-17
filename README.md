@@ -9,8 +9,8 @@
 ## 当前阶段：M1（数据与加密打通）
 
 M0（骨架与门禁）已完成并通过 CI，验收清单见 `docs/M0_ACCEPTANCE.md`。
-M1 按方案 §7.6 的顺序推进，当前落在**第一步：`pf_crypto` 原语层**。
-四个原语已全部落地（顺序按「有没有独立期望值可用」排）：
+M1 按方案 §7.6 的顺序推进。四个原语 + §3.1 密钥层级编排已全部落地
+（顺序按「有没有独立期望值可用」排）：
 
 | 原语 | 状态 | 期望值来源 |
 |---|---|---|
@@ -18,8 +18,11 @@ M1 按方案 §7.6 的顺序推进，当前落在**第一步：`pf_crypto` 原�
 | HKDF-SHA256 | ✅ 已落地 | RFC 5869 附录 A + Python 标准库 / `cryptography` 双实现复算 |
 | AES-256-GCM | ✅ 已落地 | NIST GCMVS AES-256 Count=0 锚点 + Python `cryptography` / 可选 `pycryptodome` 双实现复算；实装走纯 Dart `package:cryptography`（见 §1.5 不用 libsodium 的理由） |
 | Argon2id | ✅ 已落地 | Python `argon2-cffi`（libargon2 绑定）独立复算 + RFC 9106 §5.3 锚点（Dart 单测）；实装走纯 Dart `DartArgon2id`（零原生依赖，不用 libsodium，见 §1.5） |
+| Keyring 编排（§3.1：MK → DBKey → keyCheck → 恢复码包裹） | ✅ 已落地 | Python 标准库 hmac 手拼 HKDF × `cryptography` 交叉核对 + AES-GCM 双实现；`src/keyring_core.dart` 纯函数组合，AAD / info 标签 / 错误码全部被向量锁死 |
 
-容器编解码器、Keyring 实装、SQLCipher 打开流程仍在后面，尚未开工。
+§7.6 第 ① 项 `pf_crypto` 原语层到此**完成**。仍在后面的：
+有状态 Keyring 服务（初始化 / 解锁 / 失败计数，对接 flutter_secure_storage，M2）、
+SQLCipher 打开流程、容器编解码器实装、导出器。
 
 ---
 

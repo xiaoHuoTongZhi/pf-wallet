@@ -1,0 +1,309 @@
+{
+  "schemaVersion": 1,
+  "suite": "keyring",
+  "title": "Keyring 密钥层级编排",
+  "description": "锁死 §3.1 密钥层级（MK → DBKey → keyCheck → 恢复码包裹）的全部组合规则：HKDF info 标签、两个 AAD 的拼法、固定明文、错误码分支。期望值由 Python（标准库 hmac + cryptography，交叉核对 pycryptodome）独立复算。",
+  "cases": [
+    {
+      "id": "keyring.dbkey.derive.default",
+      "kind": "keyring.dbkey.derive",
+      "title": "MK → DBKey（HKDF-SHA256，info=\"pf/db/1\"，缺省 salt）",
+      "milestone": "M1",
+      "input": {
+        "masterKeyHex": "3d7fa1c29b04e5f67a83c1d90b254e68f7a2c30958d16b4e92f0ad3716c8e45b"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "dbKeyHex": "30e0382aab4f7051e1ed5e9406a2fdfd9a372d63b58f1e9a74794dc2538e113d"
+        }
+      },
+      "notes": "锁死 §7.4 的 DBKey 派生。info 标签 \"pf/db/1\" 是格式契约：改一个字符，所有已创建的数据库一个字节不动却再也打不开。期望值由 Python 标准库 hmac 手拼的 HKDF 与 cryptography 的 HKDF 交叉复算。",
+      "tags": [
+        "crypto",
+        "preset"
+      ]
+    },
+    {
+      "id": "keyring.dbkey.derive.other-mk",
+      "kind": "keyring.dbkey.derive",
+      "title": "不同 MK ⇒ 不同 DBKey（用途分离的前提）",
+      "milestone": "M1",
+      "input": {
+        "masterKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "dbKeyHex": "1b5494c6011ba9318d4b9e30c9552693eacbae45adb3e95178157393405d49e0"
+        }
+      },
+      "notes": "锁「HKDF 真的在吃输入」：若实现把 MK 写死或复用 PRK，这条会与上一条撞车。附件 KEK、生物识别包裹密钥的分离性同理依赖于此。",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "keyring.keycheck.seal.default",
+      "kind": "keyring.keycheck.seal",
+      "title": "生成 keyCheck 块（§3.5.1 的 keyCheck 对象）",
+      "milestone": "M1",
+      "input": {
+        "dbKeyHex": "30e0382aab4f7051e1ed5e9406a2fdfd9a372d63b58f1e9a74794dc2538e113d",
+        "nonceHex": "2122232425262728292a2b2c",
+        "installId": "01J8Z9K2M4P6Q8R0T2V4X6Z8B1",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "nonceHex": "2122232425262728292a2b2c",
+          "ciphertextHex": "6b4356adaab7ca240c3d4bf46d2f",
+          "tagHex": "6e14a7cdbf9875b2172533aa7e66abe1",
+          "aad": "pf-keycheck-v1|1|01J8Z9K2M4P6Q8R0T2V4X6Z8B1"
+        }
+      },
+      "notes": "锁 AAD 拼法 \"pf-keycheck-v1|<cfgVersion>|<installId>\" 与固定明文 \"PF:KEYCHECK:v1\"。规格裁决：§3.5.1 示例的 ct=48B 与 §3.1 的 14 字节明文矛盾，采用 §3.1，ct = 14+16 = 30 字节。",
+      "tags": [
+        "crypto",
+        "preset"
+      ]
+    },
+    {
+      "id": "keyring.keycheck.seal.cfg-version-binding",
+      "kind": "keyring.keycheck.seal",
+      "title": "cfgVersion 进入 AAD（v=2 时密文不同）",
+      "milestone": "M1",
+      "input": {
+        "dbKeyHex": "30e0382aab4f7051e1ed5e9406a2fdfd9a372d63b58f1e9a74794dc2538e113d",
+        "nonceHex": "2122232425262728292a2b2c",
+        "installId": "01J8Z9K2M4P6Q8R0T2V4X6Z8B1",
+        "cfgVersion": 2
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "nonceHex": "2122232425262728292a2b2c",
+          "ciphertextHex": "6b4356adaab7ca240c3d4bf46d2f",
+          "tagHex": "ff093aa61eb8a72c7957b9710f3d834a",
+          "aad": "pf-keycheck-v1|2|01J8Z9K2M4P6Q8R0T2V4X6Z8B1"
+        }
+      },
+      "notes": "锁「版本号真的进了 AAD」：同 DBKey 同 nonce 下 v=1 与 v=2 的密文必须不同。",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "keyring.keycheck.seal.nonce-length-invalid",
+      "kind": "keyring.keycheck.seal",
+      "title": "nonce 不是 12 字节 ⇒ headerInvalid（输入契约破坏）",
+      "milestone": "M1",
+      "input": {
+        "dbKeyHex": "30e0382aab4f7051e1ed5e9406a2fdfd9a372d63b58f1e9a74794dc2538e113d",
+        "nonceHex": "3132333435363738393a3b3c3d",
+        "installId": "01J8Z9K2M4P6Q8R0T2V4X6Z8B1",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFK_E_TAMPERED"
+      },
+      "notes": "keyCheck 块的 nonce 钉死 12 字节（§3.5.1 存进 cfg 的块格式契约）：长度不符 = 块结构破坏 → PFK_E_TAMPERED。与 AEAD 层自身的 headerInvalid（nonce 8/16 字节在 GCM 合法）分层不冲突。",
+      "tags": [
+        "crypto",
+        "error"
+      ]
+    },
+    {
+      "id": "keyring.keycheck.open.roundtrip",
+      "kind": "keyring.keycheck.open",
+      "title": "正确的 DBKey 解开 keyCheck 并命中固定明文",
+      "milestone": "M1",
+      "input": {
+        "dbKeyHex": "30e0382aab4f7051e1ed5e9406a2fdfd9a372d63b58f1e9a74794dc2538e113d",
+        "nonceHex": "2122232425262728292a2b2c",
+        "ciphertextHex": "6b4356adaab7ca240c3d4bf46d2f",
+        "tagHex": "6e14a7cdbf9875b2172533aa7e66abe1",
+        "installId": "01J8Z9K2M4P6Q8R0T2V4X6Z8B1",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "plaintextUtf8": "PF:KEYCHECK:v1"
+        }
+      },
+      "notes": "解锁路径的第一步：keyCheck 过了才去开数据库。明文必须逐字节等于固定常量。",
+      "tags": [
+        "crypto",
+        "preset"
+      ]
+    },
+    {
+      "id": "keyring.keycheck.open.wrong-dbkey",
+      "kind": "keyring.keycheck.open",
+      "title": "DBKey 错（密码错）⇒ wrongPassword",
+      "milestone": "M1",
+      "input": {
+        "dbKeyHex": "31e1392baa4e7150e0ec5f9507a3fcfc9b362c62b48e1f9b75784cc3528f103c",
+        "nonceHex": "2122232425262728292a2b2c",
+        "ciphertextHex": "6b4356adaab7ca240c3d4bf46d2f",
+        "tagHex": "6e14a7cdbf9875b2172533aa7e66abe1",
+        "installId": "01J8Z9K2M4P6Q8R0T2V4X6Z8B1",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFK_E_WRONG_PASSWORD"
+      },
+      "notes": "§3.1 的核心价值：密码错在这里现形，不必去开数据库。注意加密层无法区分「密码错」与「块被改」—— 两者都是认证失败，统一映射为 PFK_E_WRONG_PASSWORD，由 App 层结合恢复码路径消歧。",
+      "tags": [
+        "crypto",
+        "error"
+      ]
+    },
+    {
+      "id": "keyring.keycheck.open.install-id-mismatch",
+      "kind": "keyring.keycheck.open",
+      "title": "installId 不符（AAD 被换）⇒ 认证失败 ⇒ wrongPassword",
+      "milestone": "M1",
+      "input": {
+        "dbKeyHex": "30e0382aab4f7051e1ed5e9406a2fdfd9a372d63b58f1e9a74794dc2538e113d",
+        "nonceHex": "2122232425262728292a2b2c",
+        "ciphertextHex": "6b4356adaab7ca240c3d4bf46d2f",
+        "tagHex": "6e14a7cdbf9875b2172533aa7e66abe1",
+        "installId": "01J8ZOTHERDEVICE0000000000X",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFK_E_WRONG_PASSWORD"
+      },
+      "notes": "锁「AAD 真的参与认证」：把别人的 cfg 抄过来换上自己的 installId 也过不去。与密码错同一错误码 —— App 层消歧，见 wrong-dbkey 的 notes。",
+      "tags": [
+        "crypto",
+        "error"
+      ]
+    },
+    {
+      "id": "keyring.keycheck.open.ciphertext-short",
+      "kind": "keyring.keycheck.open",
+      "title": "密文长度不足 ⇒ tampered（结构破坏，未进 AEAD 先拦下）",
+      "milestone": "M1",
+      "input": {
+        "dbKeyHex": "30e0382aab4f7051e1ed5e9406a2fdfd9a372d63b58f1e9a74794dc2538e113d",
+        "nonceHex": "2122232425262728292a2b2c",
+        "ciphertextHex": "6b4356adaab7ca240c3d",
+        "tagHex": "6e14a7cdbf9875b2172533aa7e66abe1",
+        "installId": "01J8Z9K2M4P6Q8R0T2V4X6Z8B1",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFK_E_TAMPERED"
+      },
+      "notes": "ct 长度 ≠ 明文长度（14）= 块被截断或写坏 → PFK_E_TAMPERED，不走认证。",
+      "tags": [
+        "crypto",
+        "error"
+      ]
+    },
+    {
+      "id": "keyring.recovery.wrap.default",
+      "kind": "keyring.recovery.wrap",
+      "title": "RK 包裹 MK → recovery.blob（§3.5.2）",
+      "milestone": "M1",
+      "input": {
+        "recoveryKeyHex": "4980454f75f0e6f496a6819535e4600007850932b9ccfb4a8a67d7aea1c393c4",
+        "masterKeyHex": "3d7fa1c29b04e5f67a83c1d90b254e68f7a2c30958d16b4e92f0ad3716c8e45b",
+        "nonceHex": "2122232425262728292a2b2c",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "nonceHex": "2122232425262728292a2b2c",
+          "ciphertextHex": "6d4e2e65a3d216e971402d39f8a3d6f3850c7e5bfe1c221d7ef948284a2d6d3e",
+          "tagHex": "460239f232f91b75dd0a1b1d2f2fc210",
+          "aad": "pf-recovery-v1|1"
+        }
+      },
+      "notes": "锁 AAD 拼法 \"pf-recovery-v1|<cfgVersion>\" 与「密文 = MK 原文」。RK = Argon2id(恢复码, salt_rec, P_*)，派生已有独立向量，此处直接给定 RK。",
+      "tags": [
+        "crypto",
+        "preset"
+      ]
+    },
+    {
+      "id": "keyring.recovery.unwrap.roundtrip",
+      "kind": "keyring.recovery.unwrap",
+      "title": "正确的 RK 解开 recovery.blob 还原 MK",
+      "milestone": "M1",
+      "input": {
+        "recoveryKeyHex": "4980454f75f0e6f496a6819535e4600007850932b9ccfb4a8a67d7aea1c393c4",
+        "nonceHex": "2122232425262728292a2b2c",
+        "ciphertextHex": "6d4e2e65a3d216e971402d39f8a3d6f3850c7e5bfe1c221d7ef948284a2d6d3e",
+        "tagHex": "460239f232f91b75dd0a1b1d2f2fc210",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "masterKeyHex": "3d7fa1c29b04e5f67a83c1d90b254e68f7a2c30958d16b4e92f0ad3716c8e45b"
+        }
+      },
+      "notes": "恢复通路：解开 blob 即得 MK，与主密码解锁完全等价。",
+      "tags": [
+        "crypto",
+        "preset"
+      ]
+    },
+    {
+      "id": "keyring.recovery.unwrap.wrong-rk",
+      "kind": "keyring.recovery.unwrap",
+      "title": "RK 错（恢复码错）⇒ wrongRecoveryCode",
+      "milestone": "M1",
+      "input": {
+        "recoveryKeyHex": "4881444e74f1e7f597a7809434e5610106840833b8cdfa4b8b66d6afa0c292c5",
+        "nonceHex": "2122232425262728292a2b2c",
+        "ciphertextHex": "6d4e2e65a3d216e971402d39f8a3d6f3850c7e5bfe1c221d7ef948284a2d6d3e",
+        "tagHex": "460239f232f91b75dd0a1b1d2f2fc210",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFK_E_WRONG_RECOVERY_CODE"
+      },
+      "notes": "与主密码错分开编码：用户动作不同（核对抄写 vs 重输密码），App 层按码分支给出不同提示与不同的重试策略。",
+      "tags": [
+        "crypto",
+        "error"
+      ]
+    },
+    {
+      "id": "keyring.recovery.unwrap.tag-tampered",
+      "kind": "keyring.recovery.unwrap",
+      "title": "标签被篡改 ⇒ wrongRecoveryCode",
+      "milestone": "M1",
+      "input": {
+        "recoveryKeyHex": "4980454f75f0e6f496a6819535e4600007850932b9ccfb4a8a67d7aea1c393c4",
+        "nonceHex": "2122232425262728292a2b2c",
+        "ciphertextHex": "6d4e2e65a3d216e971402d39f8a3d6f3850c7e5bfe1c221d7ef948284a2d6d3e",
+        "tagHex": "b90239f232f91b75dd0a1b1d2f2fc210",
+        "cfgVersion": 1
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFK_E_WRONG_RECOVERY_CODE"
+      },
+      "notes": "任何一位被改，认证必须失败。恢复码路径无「内容被换」中间态：能过认证就等于 RK 正确。",
+      "tags": [
+        "crypto",
+        "error"
+      ]
+    }
+  ]
+}
