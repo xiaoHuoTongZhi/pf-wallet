@@ -1,0 +1,292 @@
+{
+  "schemaVersion": 1,
+  "suite": "aes256gcm",
+  "title": "AES-256-GCM 黄金测试向量",
+  "description": "AES-256-GCM（NIST SP 800-38D）的认证加密向量。key=32 / nonce=12 / tag=16 字节。\n期望值由 Python cryptography 独立复算，并以 NIST GCMVS AES-256 Count=0 官方向量锚定；含 96 位 nonce 主路径、非 96 位 nonce 边界（8 / 16 字节）、空明文、单字节明文，以及三类认证失败（标签篡改 / 密文篡改 / AAD 不符）—— 后者必须抛 PFB_E_AUTH_FAILED。\nnonce 复用不能由向量守，但「同一输入永远同一输出」由本套件守。",
+  "cases": [
+    {
+      "id": "aead.aes256gcm.seal.nist-anchor-256",
+      "kind": "aead.aes256gcm.seal",
+      "title": "NIST GCMVS AES-256 Count=0：空明文 / 空 AAD / 96 位 nonce",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "plaintextHex": "",
+        "aadHex": ""
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ciphertextHex": "",
+          "tagHex": "bdc1ac884d332457a1d2664f168c76f0"
+        }
+      },
+      "notes": "与 gcmEncryptExtIV256.rsp Count=0 逐字节一致；既作为正式向量，也作为主生成的锚点。",
+      "tags": [
+        "crypto",
+        "cross-platform",
+        "convergence"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.seal.plaintext-single-block",
+      "kind": "aead.aes256gcm.seal",
+      "title": "seal · plaintext-single-block",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "plaintextHex": "000102030405060708090a0b0c0d0e0f",
+        "aadHex": ""
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ciphertextHex": "e69c8e689b8eb63863f5c32d01dcca1f",
+          "tagHex": "5d8629be177ace8460f9d0d3cd00d9a8"
+        }
+      },
+      "notes": "16 字节明文、空 AAD、96 位 nonce 主路径",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.seal.empty-pt-with-aad",
+      "kind": "aead.aes256gcm.seal",
+      "title": "seal · empty-pt-with-aad",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "plaintextHex": "",
+        "aadHex": "202122232425262728292a2b2c2d2e2f"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ciphertextHex": "",
+          "tagHex": "7df03a034192fc545dc1d76279a02b50"
+        }
+      },
+      "notes": "空明文 + 16 字节 AAD：守「AAD 进 GHASH 但不进密文」",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.seal.plaintext-single-byte",
+      "kind": "aead.aes256gcm.seal",
+      "title": "seal · plaintext-single-byte",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "plaintextHex": "42",
+        "aadHex": ""
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ciphertextHex": "a4",
+          "tagHex": "f955d254cba1095f14cf5decee1dfd3e"
+        }
+      },
+      "notes": "单字节明文边界（块对齐前的最小输入）",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.seal.aad-and-pt",
+      "kind": "aead.aes256gcm.seal",
+      "title": "seal · aad-and-pt",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "plaintextHex": "000102030405060708090a0b0c0d0e0f",
+        "aadHex": "202122232425262728292a2b2c2d2e2f"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ciphertextHex": "e69c8e689b8eb63863f5c32d01dcca1f",
+          "tagHex": "23d8effe8354cb1cf8b419601118c616"
+        }
+      },
+      "notes": "明文与 AAD 同时存在，守两者独立参与认证",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.seal.nonce-8-byte",
+      "kind": "aead.aes256gcm.seal",
+      "title": "seal · nonce-8-byte",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "0011223344556677",
+        "plaintextHex": "000102030405060708090a0b0c0d0e0f",
+        "aadHex": "0011223344556677"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ciphertextHex": "3b31a4ecffaa9ce7db84cd845d646790",
+          "tagHex": "f8c71c0a81b38f67c0be4572e978153a"
+        }
+      },
+      "notes": "非 96 位 nonce 边界（偏短）；Dart 用 AesGcm.with256bits(nonceLength=8)",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.seal.nonce-16-byte",
+      "kind": "aead.aes256gcm.seal",
+      "title": "seal · nonce-16-byte",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "00112233445566778899aabbccddeeff",
+        "plaintextHex": "000102030405060708090a0b0c0d0e0f",
+        "aadHex": "00112233445566778899aabbccddeeff"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "ciphertextHex": "42f5db2de01b8ffc5446cbca2ecb66c9",
+          "tagHex": "905a0132fd6e6cca7507d6599a4dd33b"
+        }
+      },
+      "notes": "非 96 位 nonce 边界（偏长）；GCM 对 96 位外 nonce 改走 GHASH(nonce)",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.open.nist-anchor-256-open",
+      "kind": "aead.aes256gcm.open",
+      "title": "open · nist-anchor-256-open",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "ciphertextHex": "",
+        "tagHex": "bdc1ac884d332457a1d2664f168c76f0",
+        "aadHex": ""
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "plaintextHex": ""
+        }
+      },
+      "notes": "解密 NIST 锚点，应为空明文",
+      "tags": [
+        "crypto"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.open.roundtrip-single-block",
+      "kind": "aead.aes256gcm.open",
+      "title": "open · roundtrip-single-block",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "ciphertextHex": "e69c8e689b8eb63863f5c32d01dcca1f",
+        "tagHex": "5d8629be177ace8460f9d0d3cd00d9a8",
+        "aadHex": ""
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "plaintextHex": "000102030405060708090a0b0c0d0e0f"
+        }
+      },
+      "notes": "解密主路径，应还原 16 字节明文",
+      "tags": [
+        "crypto"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.open.tag-tampered",
+      "kind": "aead.aes256gcm.open",
+      "title": "open · tag-tampered",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "ciphertextHex": "e69c8e689b8eb63863f5c32d01dcca1f",
+        "tagHex": "a28629be177ace8460f9d0d3cd00d9a8",
+        "aadHex": ""
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_AUTH_FAILED"
+      },
+      "notes": "标签被改一个字节，GHASH 校验必败：若省略认证步，被篡改的密文会被当成正常明文入库，账本损坏且无任何报错。",
+      "tags": [
+        "crypto",
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.open.ciphertext-tampered",
+      "kind": "aead.aes256gcm.open",
+      "title": "open · ciphertext-tampered",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "ciphertextHex": "199c8e689b8eb63863f5c32d01dcca1f",
+        "tagHex": "5d8629be177ace8460f9d0d3cd00d9a8",
+        "aadHex": ""
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_AUTH_FAILED"
+      },
+      "notes": "密文被改，CTR 还原出的明文变了，标签必败",
+      "tags": [
+        "crypto",
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "aead.aes256gcm.open.aad-mismatch",
+      "kind": "aead.aes256gcm.open",
+      "title": "open · aad-mismatch",
+      "milestone": "M1",
+      "input": {
+        "keyHex": "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        "nonceHex": "516c33929df5a3284ff463d7",
+        "ciphertextHex": "e69c8e689b8eb63863f5c32d01dcca1f",
+        "tagHex": "23d8effe8354cb1cf8b419601118c616",
+        "aadHex": "df2122232425262728292a2b2c2d2e2f"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_AUTH_FAILED"
+      },
+      "notes": "AAD 不符：AAD 参与认证但不进密文，改它必须败",
+      "tags": [
+        "crypto",
+        "security",
+        "boundary"
+      ]
+    }
+  ]
+}

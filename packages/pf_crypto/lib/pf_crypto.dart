@@ -36,6 +36,7 @@
 library;
 
 export 'src/aead.dart';
+export 'src/aesgcm.dart';
 export 'src/argon2_params.dart';
 export 'src/byte_order.dart';
 export 'src/container_format.dart';

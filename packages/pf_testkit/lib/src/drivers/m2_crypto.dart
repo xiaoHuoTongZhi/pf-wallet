@@ -54,49 +54,6 @@ final class KdfArgon2idDeriveDriver extends _PendingDriver {
   };
 }
 
-/// AES-256-GCM 封装（加密 + 认证）。
-final class AeadSealDriver extends _PendingDriver {
-  const AeadSealDriver();
-
-  @override
-  String get kind => 'aead.aes256gcm.seal';
-
-  @override
-  String get description => 'AES-256-GCM 封装，产出密文与 16 字节认证标签';
-
-  @override
-  Map<String, String> get inputContract => const <String, String>{
-    'keyHex': '32 字节密钥',
-    'nonceHex': '12 字节 nonce',
-    'plaintextHex': '明文',
-    'aadHex': '附加认证数据（可为空）',
-  };
-}
-
-/// AES-256-GCM 解封。
-///
-/// 单独成一条 kind 而不是与 seal 合并，是因为**失败路径才是这里的重点**：
-/// 「标签被改一个字节必须抛 PFB_E_AUTH_FAILED」比「正常加解密能往返」
-/// 重要得多。合并成一个 kind 会让失败路径只能靠一个布尔开关来测。
-final class AeadOpenDriver extends _PendingDriver {
-  const AeadOpenDriver();
-
-  @override
-  String get kind => 'aead.aes256gcm.open';
-
-  @override
-  String get description => 'AES-256-GCM 解封并验签，失败抛 PFB_E_AUTH_FAILED';
-
-  @override
-  Map<String, String> get inputContract => const <String, String>{
-    'keyHex': '32 字节密钥',
-    'nonceHex': '12 字节 nonce',
-    'ciphertextHex': '密文',
-    'tagHex': '16 字节认证标签',
-    'aadHex': '附加认证数据（可为空）',
-  };
-}
-
 /// 密钥环：用 KEK 包裹 DEK。
 final class KeyringWrapDriver extends _PendingDriver {
   const KeyringWrapDriver();

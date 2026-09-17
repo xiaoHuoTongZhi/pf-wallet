@@ -75,16 +75,29 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 > 期望值来自 `tools/golden_vectors_gen/hkdf_sha256.py`（Python 标准库独立复算 +
 > `cryptography` 交叉核对 + RFC 5869 附录 A 逐字对照），生成脚本入库、可重跑。
 > 分诊见 **§3 的「P1 · 向量覆盖检查」**。
+>
+> **M1 第三个原语（2026-09-17）**：`pf_crypto` 落地 **AES-256-GCM**
+> （`src/aesgcm.dart`：`Aes256Gcm implements Aead`）。实装走纯 Dart 的
+> `package:cryptography`（理由见方案 §1.5：libodium 的 `crypto_aead_aes256gcm`
+> 在 ARM 无 AES 指令时 `is_available()` 返回 false，不能作唯一实现；纯 Dart 实装
+> 在 6 个平台得到同一份行为）。`Aead` 契约（`aead.dart`）的 `seal` / `open` 因
+> `cryptography` 2.x 的 `encrypt` / `decrypt` 是 `Future` 而改为异步。
+> 期望值来自 `tools/golden_vectors_gen/aes256gcm.py`：`cryptography` 主生成 +
+> NIST GCMVS AES-256 Count=0 官方向量锚点（命中才落盘）+ 可选 `pycryptodome`
+> 第二套实现交叉核对。覆盖 96 位 nonce 主路径、8 / 16 字节 nonce 边界、
+> 空明文 / 单字节明文 / AAD，以及三类认证失败（标签篡改 / 密文篡改 / AAD 不符）
+> 必须抛 `PFB_E_AUTH_FAILED`。驱动 `drivers/m1_aesgcm.dart`（`AeadSealDriver` /
+> `AeadOpenDriver`）已注册，`kind` 契约固定。分诊见 **§3 的「P1 · 向量覆盖检查」**。
 
 ### 0.3 本机复检结果（改动后）
 
 ```
-format     Formatted 84 files (0 changed)        ← M0 当时 76；判定线是 0 changed
+format     Formatted 87 files (0 changed)        ← M0 当时 76；判定线是 0 changed
 analyze    No issues found!                      （--fatal-infos --fatal-warnings）
 guards     6 项检查，error=0 warning=13          （deps 11 / manifest 2，均为刻意保留）
-test       368 项，全通过：
-             pf_core 91 / pf_crypto 98 / pf_data 19 / pf_io 23 / pf_testkit 57 / guards 80
-vectors    109 条通过，失败 0，待实现 0，判定摘要 aec08f7118a0…
+test       400 项，全通过：
+             pf_core 91 / pf_crypto 130 / pf_data 19 / pf_io 23 / pf_testkit 57 / guards 80
+vectors    121 条通过，失败 0，待实现 0，判定摘要 8d25210b3c4b…
 vectors:cov 27 个驱动全部有向量引用（反例：--vectors 指向单个套件 → 退出码 1，列出 21 个）
 新增工具    assert_test_report.dart 三条分支（0/1/2）逐一实测通过
 ```
@@ -99,11 +112,14 @@ vectors:cov 27 个驱动全部有向量引用（反例：--vectors 指向单个�
 > 生成脚本是 `.py`，不计入 `dart format`）、`pf_crypto 72 → 98`（+26 条 `hkdf_test.dart`）、
 > `pf_testkit 55 → 57`（+2 条，覆盖检查的 `uncoveredKinds`）、
 > 向量 `98 → 109`（+11 条 `hkdf_sha256`）。
+> 第三个原语 `src/aesgcm.dart`（AES-256-GCM）带来 `84 → 87`（+3 个 `.dart`：
+> 实现 / 测试 / 驱动；生成脚本 `.py` 不计入）、`pf_crypto 98 → 130`（+32 条 `aesgcm_test.dart`）、
+> 向量 `109 → 121`（+12 条 `aes256gcm`，其中 8 条 seal / 4 条 open；含 NIST GCMVS 锚点）。
 > 记录它是因为数字会一直变，而**判定线不变** —— 追数字本身没有意义，
 > 有意义的是知道「它为什么变了」。
 >
-> `verdictDigest` 从 `f573cf9de746…` 变成 `aec08f7118a0…` 是**必然**的：
-> 它覆盖「用例 ID + 状态」，新增 11 条用例就会变。
+> `verdictDigest` 从 `f573cf9de746…` 变成 `aec08f7118a0…`、再到 `8d25210b3c4b…` 是**必然**的：
+> 它覆盖「用例 ID + 状态」，新增用例就会变。
 > 所以「摘要与上一版相同」只在向量集合没变时才有意义；
 > 向量集合变了以后，判据是「失败 0 / 待实现 0」与「三平台摘要彼此相同」。
 
@@ -425,7 +441,7 @@ PY
 | 安装 melos | `melos 可执行目录：/home/runner/.pub-cache/bin` 且 `ls` 列出 `melos` |
 | 解析工作区依赖 | `flutter pub get` 成功；根目录生成唯一 `pubspec.lock` |
 | 打印工具版本 | `melos --version` → **6.3.2**（见 §3 P0-1：写成 6.3.3 这一步就红） |
-| 检查格式 | `Formatted 84 files (0 changed)`（M0 当时是 76；判定线是 `0 changed`，不是这个数字） |
+| 检查格式 | `Formatted 87 files (0 changed)`（M0 当时是 76；判定线是 `0 changed`，不是这个数字） |
 | 静态分析 | 每个包 `No issues found!` |
 | 六个 guards | 每项 `error=0`（`deps` / `banned-api` / `logging` / `manifest` / `version` / `tracked-paths`） |
 | 向量覆盖检查 | `✓ 覆盖检查：27 个驱动全部有向量引用`（见 §3 的「P1 · 向量覆盖检查」） |
@@ -452,7 +468,7 @@ PY
 
 | 步骤 | 预期 |
 |---|---|
-| 运行单元测试（含覆盖率） | 390 条全过（其中 `pf_mobile` 3 条走 flutter_tester）；产出 `**/coverage/lcov.info`。<br>分解：pf_core 91 / pf_crypto 98 / pf_data 19 / pf_io 23 / pf_testkit 57 / guards 80 / pf_ui 19 / pf_mobile 3 |
+| 运行单元测试（含覆盖率） | 422 条全过（其中 `pf_mobile` 3 条走 flutter_tester）；产出 `**/coverage/lcov.info`。<br>分解：pf_core 91 / pf_crypto 130 / pf_data 19 / pf_io 23 / pf_testkit 57 / guards 80 / pf_ui 19 / pf_mobile 3 |
 | 运行移动端 widget 测试（JSON 协议报告） | `apps/pf_mobile` 下产出 `build/test-reports/pf_mobile.jsonl`（JSON Lines，每行一个事件） |
 | 断言 widget 测试确实执行 | 输出「执行并通过 3 / 失败 0 / 跳过 0 / 合成 1」+ 三条 `✓` |
 | 上传移动端测试报告 | artifact `mobile-widget-report-<os>-<sha>` |
@@ -467,14 +483,14 @@ PY
 
 | 作业 | 平台 | 预期 |
 |---|---|---|
-| `golden-vectors` | 三平台矩阵，`fail-fast: false` | 每平台 `向量 109 条：通过 109，失败 0，待实现 0`，上传 artifact `vectors-report-<os>-<sha>`（保留 30 天） |
+| `golden-vectors` | 三平台矩阵，`fail-fast: false` | 每平台 `向量 121 条：通过 121，失败 0，待实现 0`，上传 artifact `vectors-report-<os>-<sha>`（保留 30 天） |
 | `verdict-consistency` | ubuntu，`needs: [golden-vectors]` | 下载三个 artifact 到 `reports/`，跑 `python3 tools/ci/compare_verdicts.py reports` |
 
 `verdict-consistency` 的三种结果，含义完全不同：
 
 | 输出 | 退出码 | 含义 |
 |---|---|---|
-| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位。**不要拿它与上一个版本比对**：摘要覆盖「用例 ID + 状态」，新增/删除向量必然改变它（M0 时 98 条 → `f573cf9de746`；补入 `hkdf_sha256` 后 109 条 → `aec08f7118a0`）。有意义的是「三个平台彼此相同」 |
+| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位。**不要拿它与上一个版本比对**：摘要覆盖「用例 ID + 状态」，新增/删除向量必然改变它（M0 时 98 条 → `f573cf9de746`；补入 `hkdf_sha256` 后 109 条 → `aec08f7118a0`；补入 `aes256gcm` 后 121 条 → `8d25210b3c4b`）。有意义的是「三个平台彼此相同」 |
 | `✗ 只找到 1 份报告，无法做跨平台比对` | 2 | **接线问题**，不是代码问题：`upload-artifact` 的 `name` 与 `download-artifact` 的 `pattern` 对不上，或 matrix 少跑了一个平台。这条被刻意做成失败而不是跳过 —— 「只跑了一个平台」不该被当成「三个平台一致」 |
 | `✗ 跨平台判定不一致。逐条对比：` | 1 | **真的有平台差异**。报告会逐条列出 `用例 ID: 平台A=pass vs 平台B=fail` |
 

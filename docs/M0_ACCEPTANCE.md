@@ -58,13 +58,13 @@ pf-wallet/
 ├── apps/pf_mobile/                      # 应用壳（M0 仅骨架页 + 冒烟测试）
 ├── packages/
 │   ├── pf_core/                         # 零依赖底座：错误码 / ULID / Money / 版本常量
-│   ├── pf_crypto/                       # 加密原语（M2 实装；M0 只有接口与向量）
+│   ├── pf_crypto/                       # 加密原语（M1 已实装 SHA-256 / HKDF-SHA256 / AES-256-GCM；Argon2id / 密钥环留到 M2）
 │   ├── pf_data/                         # 存储与迁移编排
 │   ├── pf_io/                          # 导入导出、记录版本与合并裁决
 │   ├── pf_ui/                           # 主题与通用组件
 │   └── pf_testkit/                      # 黄金向量框架（驱动 / 判定 / 报告 / 基线）
 ├── test_vectors/
-│   ├── v1/*.json                        # 98 条黄金向量
+│   ├── v1/*.json                        # 121 条黄金向量（含 M1 的 hkdf_sha256 12 条 + aes256gcm 12 条）
 │   ├── schema/vector.schema.json        # 向量文件自身的 JSON Schema
 │   ├── pending_baseline.json            # 尚未实现的向量的**基线**
 │   └── README.md
@@ -225,7 +225,7 @@ M2 引入加密实现的向量时，基线才会第一次出现内容。
 
 ### 4.2 向量数量地板
 
-`packages/pf_testkit/test/real_vectors_test.dart` 断言向量总数 ≥ 90（当前 98）。
+`packages/pf_testkit/test/real_vectors_test.dart` 断言向量总数 ≥ 90（当前 121）。
 它拦的是**成批误删** —— 删掉一条向量不会让任何东西变红，只会让覆盖悄悄变薄。
 **有意缩减向量集时必须连这个数字一起改**，那正是希望被看见的动作。
 
@@ -272,7 +272,7 @@ melos run ci:all         # = gate1 → gate2 → gate3
 | 7 | `melos run guards:manifest` | `error=0` | ✅ error=0 warning=2 |
 | 8 | `melos run guards:version` | `error=0` | ✅ error=0 |
 | 9 | `melos run test` | 全包通过 | ⚠️ 纯 Dart 包全通过（pf_core 91 / pf_crypto 57 / pf_data 19 / pf_io 23 / pf_testkit 34 / guards 61）；`pf_mobile` 的 3 条 widget 测试需 `flutter test`，本机开发沙箱**阻断了 flutter_tester 子进程的启动**（`flutter test --verbose` 停在 artifacts 检查之后，无任何测试输出）。静态分析已覆盖其类型正确性，实际执行交给关卡 2 的三平台 CI<br>**CI 补充（提交 `36206c6`）**：三个平台的第 9 步断言全绿 ⇒ 3 条 widget 测试在 macOS / Windows / Ubuntu 上均真实执行并通过 |
-| 10 | `melos run vectors` | `全部已实现向量通过`，失败 0、待实现 0 | ✅ M0 时 98 条通过，摘要 `f573cf9de746…`；M1 补入 `hkdf_sha256` 后 109 条通过，摘要 `aec08f7118a0…`<br>**口径**：`verdictDigest` 是「`caseId\|status` 行」的 SHA-256（见 §2 关卡 3），因此**新增向量必然改变它**，这不是回归。真正的判据有两条且只此两条：① 失败与待实现均为 0（老用例一条都没坏）② 三平台摘要彼此相同（关卡 3 的 `跨平台判定一致性`）—— 拿摘要与上一个版本比对，在两版向量集合不同时是无意义的 |
+| 10 | `melos run vectors` | `全部已实现向量通过`，失败 0、待实现 0 | ✅ M0 时 98 条通过，摘要 `f573cf9de746…`；M1 补入 `hkdf_sha256` 后 109 条通过，摘要 `aec08f7118a0…`；M1 再补入 `aes256gcm` 后 **121 条通过，摘要 `8d25210b3c4b…`**<br>**口径**：`verdictDigest` 是「`caseId\|status` 行」的 SHA-256（见 §2 关卡 3），因此**新增向量必然改变它**，这不是回归。真正的判据有两条且只此两条：① 失败与待实现均为 0（老用例一条都没坏）② 三平台摘要彼此相同（关卡 3 的 `跨平台判定一致性`）—— 拿摘要与上一个版本比对，在两版向量集合不同时是无意义的 |
 | 11 | `melos run vectors:pending` | 与基线一致（M0 为空） | ✅ 无 pending |
 | 12 | `python3 tools/ci/compare_verdicts.py <三份报告>` | 三平台摘要一致 | ✅ 关卡 3 的 `跨平台判定一致性` 作业通过（提交 `36206c6`，4 个作业全绿）<br>本机仍只能产出一份报告 —— 比对工具会以退出码 2 拒绝少于两份的输入，这是刻意的：一份报告的「一致」没有意义 |
 | 13 | `melos run guards:tracked-paths` | `error=0` | 🆕 **M1 期间补入的门禁**（不是 M0 的交付物）。本机实测：`trackedFiles=118 deniedPaths=0 caseCollisions=0 unexpectedPaths=0` → PASS。反例已验证：把 `.flutter_tool_state`、`build/…/ledger.db`、`scripts/publish.sh` 依次 `git add` 进索引，三条规则各自命中、退出码 1（详见 `M0_CI_RUNBOOK.md` §3 的「P1 · 入库路径检查」）。<br>口径：`trackedFiles` 是**当时索引里的文件总数**，会随正常提交增长（115 → 118 是补入这道门禁自身的 3 个新文件所致）；判据是 `deniedPaths/caseCollisions/unexpectedPaths` 三项为 0，不是这个数字本身 |
@@ -361,7 +361,7 @@ warning **不失败**，但每次 review 都要看：
 ### 明确不在 M0 判定范围内的
 
 - 真实设备上的运行表现（M0 没有可安装产物）
-- 加密实现（M2）
+- 加密实现（Argon2id / 密钥环仍在 M2；AES-256-GCM 已在 M1 实装并由向量锁定）
 - 覆盖率数字（只上传，不判定）
 
 ---

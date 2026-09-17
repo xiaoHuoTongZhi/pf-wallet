@@ -81,15 +81,17 @@ test_vectors/
 | `money` | 定点金额的渲染、解析、求和与币种相等性 |
 | `merge` | 记录版本裁决与收敛性（可交换 / 幂等 / 可结合） |
 | `hkdf_sha256` | HKDF-SHA256 的提取/扩展两阶段、缺省语义、块边界（RFC 5869 + 真实用途 MK→DBKey） |
+| `aes256gcm` | AES-256-GCM（NIST SP 800-38D）：96 位 nonce 主路径、非 96 位 nonce 边界（8 / 16 字节）、空明文 / 单字节明文 / AAD，以及三类认证失败（标签篡改 / 密文篡改 / AAD 不符）必须抛 `PFB_E_AUTH_FAILED` |
 
-**M2 的加密向量（`kdf.argon2id.derive`、`aead.aes256gcm.seal` / `.open`、
-`keyring.wrap-dek`）刻意尚未入库。** 原因不是没时间，而是：
+**M2 的加密向量（`kdf.argon2id.derive`、`keyring.wrap-dek`）刻意尚未入库。** 原因不是没时间，而是：
 它们的期望值必须由独立的参考实现生成（argon2 CLI / OpenSSL），
 而 M0 阶段还没有可信的产出通道。先摆一个空壳占位会得到一个
 「看起来覆盖了、实际什么都没测」的假绿灯 —— 那比缺覆盖危险得多。
 
 对应的驱动已经注册（见 `packages/pf_testkit/lib/src/drivers/m2_crypto.dart`），
 `kind` 契约已经固定，M2 落地时只需把 `isImplemented` 翻成 `true` 并补向量。
+AES-256-GCM 的驱动（`m1_aesgcm.dart`）已在 M1 实现并入库，向量由
+`tools/golden_vectors_gen/aes256gcm.py` 生成（NIST GCMVS 锚点 + `cryptography` / `pycryptodome` 双实现复算）。
 
 ## 怎么跑
 

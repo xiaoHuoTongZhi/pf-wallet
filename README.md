@@ -16,7 +16,7 @@ M1 按方案 §7.6 的顺序推进，当前落在**第一步：`pf_crypto` 原�
 |---|---|---|
 | 摘要（SHA-256） | ✅ 已落地 | FIPS / NIST 公开向量 + Python `hashlib` 复算 |
 | HKDF-SHA256 | ✅ 已落地 | RFC 5869 附录 A + Python 标准库 / `cryptography` 双实现复算 |
-| AES-256-GCM | ⬜ 未开工 | 需先用 Python `cryptography` 生成向量（先向量、后实现） |
+| AES-256-GCM | ✅ 已落地 | NIST GCMVS AES-256 Count=0 锚点 + Python `cryptography` / 可选 `pycryptodome` 双实现复算；实装走纯 Dart `package:cryptography`（见 §1.5 不用 libsodium 的理由） |
 | Argon2id | ⬜ 未开工 | 同上；且原生库（libsodium）的供给方案未定，见 §7.6 |
 
 容器编解码器、Keyring 实装、SQLCipher 打开流程仍在后面，尚未开工。
