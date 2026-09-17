@@ -14,6 +14,10 @@ library;
 
 import 'package:pf_core/pf_core.dart';
 
+/// 语句分隔符：R4 校验和按 `statements.join(kMigrationStatementSeparator)` 计算。
+/// 定义在迁移契约这一侧（而非执行器），生成器、执行器与审计读取共用一份口径。
+const String kMigrationStatementSeparator = '\n';
+
 /// 一次 schema 迁移。
 final class Migration {
   const Migration({required this.version, required this.description, required this.statements});
