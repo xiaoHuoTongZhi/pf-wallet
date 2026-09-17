@@ -92,13 +92,16 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 ### 0.3 本机复检结果（改动后）
 
 ```
-format     Formatted 110 files (0 changed)       ← M0 当时 76；判定线是 0 changed
+format     Formatted 111 files (0 changed)       ← M0 当时 76；判定线是 0 changed
 analyze    No issues found!                      （--fatal-infos --fatal-warnings）
 guards     6 项检查，error=0 warning=13          （deps 11 / manifest 2，均为刻意保留）
-test       493 项，全通过：
-             pf_core 91 / pf_crypto 165 / pf_data 77 / pf_io 23 / pf_testkit 57 / guards 80
-vectors    158 条通过，失败 0，待实现 0，判定摘要 732819dd17d7…
-vectors:cov 34 个驱动全部有向量引用（反例：--vectors 指向单个套件 → 退出码 1，列出 21 个）
+test       414 项，全通过：
+             pf_core 91 / pf_crypto 152 / pf_data 78 / pf_io 36 / pf_testkit 57 / guards 80
+             （pf_crypto 165 → 152：76B 旧容器单测随容器裁决整体替换为 §3.3 128B 版；
+              pf_io 23 → 36：+13 条导出载荷/装配器测试）
+vectors    155 条通过，失败 0，待实现 0，判定摘要 4761c8138a3f…
+             （158 → 152：旧 76B 容器三套件 28 条 → §3.3 五套件 22 条；152 → 155：+3 条 export_payload）
+vectors:cov 36 个驱动全部有向量引用（反例：--vectors 指向单个套件 → 退出码 1，列出 21 个）
 新增工具    assert_test_report.dart 三条分支（0/1/2）逐一实测通过
 ```
 
@@ -137,7 +140,12 @@ vectors:cov 34 个驱动全部有向量引用（反例：--vectors 指向单个�
 > `pf_data 32 → 77`（+45：`schema_v1_test` / `migration_runner_test` /
 > `balance_engine_test` / `repositories_test`），
 > 向量 `151 → 158`（+7 条 `balance_replay`：基础三类型 + 转账双腿 + 软删回退 +
-> 编辑改向 + 随机 1000 笔增量/全量交叉；期望值由独立 Python 实现生成）。
+> 随机 1000 笔 + 转账不进收支 + 信用卡语义 + 编辑回退）。`158 → 152` 是
+> **2026-09-17 容器裁决**：M0 的 76 字节 "PFB1" 单块容器三套向量（28 条）与
+> 规格 §3.3 的 128 字节分块格式冲突，裁决 §3.3 为唯一 v1，整体替换为
+> `container_constants / container_header / container_layout / container_digest /
+> container_file` 五套件（22 条，期望值由 `container_pfb.py` Python 独立实现生成）。
+> 76B 版从未发布过任何文件，替换无迁移负担。
 > 注意 Argon2id 的原生库供给方案最终定为**不用原生库**：走纯 Dart 的
 > `package:cryptography/dart.dart` 的 `DartArgon2id`（零原生依赖，6 平台一致，
 > 也能在 `dart test` 的 CI 上跑），因此 README 与 §1.5 里「走 libsodium」的
@@ -145,7 +153,7 @@ vectors:cov 34 个驱动全部有向量引用（反例：--vectors 指向单个�
 > 记录它是因为数字会一直变，而**判定线不变** —— 追数字本身没有意义，
 > 有意义的是知道「它为什么变了」。
 >
-> `verdictDigest` 从 `f573cf9de746…` 变成 `aec08f7118a0…`、再到 `8d25210b3c4b…`、再到 `3b05916cd8a2…`、再到 `52da6d468671…`、再到 `8d3735a894e6…`、再到 `732819dd17d7…` 是**必然**的：
+> `verdictDigest` 从 `f573cf9de746…` 变成 `aec08f7118a0…`、再到 `8d25210b3c4b…`、再到 `3b05916cd8a2…`、再到 `52da6d468671…`、再到 `8d3735a894e6…`、再到 `732819dd17d7…`、再到 `f179ad88a251…`、再到 `4761c8138a3f…` 是**必然**的：
 > 它覆盖「用例 ID + 状态」，新增用例就会变。
 > 所以「摘要与上一版相同」只在向量集合没变时才有意义；
 > 向量集合变了以后，判据是「失败 0 / 待实现 0」与「三平台摘要彼此相同」。
@@ -471,7 +479,7 @@ PY
 | 检查格式 | `Formatted 87 files (0 changed)`（M0 当时是 76；判定线是 `0 changed`，不是这个数字） |
 | 静态分析 | 每个包 `No issues found!` |
 | 六个 guards | 每项 `error=0`（`deps` / `banned-api` / `logging` / `manifest` / `version` / `tracked-paths`） |
-| 向量覆盖检查 | `✓ 覆盖检查：34 个驱动全部有向量引用`（见 §3 的「P1 · 向量覆盖检查」） |
+| 向量覆盖检查 | `✓ 覆盖检查：35 个驱动全部有向量引用`（见 §3 的「P1 · 向量覆盖检查」） |
 | 上传门禁报告 | artifact `guards-report-<sha>`，内含 `deps/banned-api/logging/manifest/version/tracked-paths.json` |
 
 失败时最常见的五条：格式不一致（本机没跑 `dart format` 就提交）、
@@ -510,14 +518,14 @@ PY
 
 | 作业 | 平台 | 预期 |
 |---|---|---|
-| `golden-vectors` | 三平台矩阵，`fail-fast: false` | 每平台 `向量 151 条：通过 151，失败 0，待实现 0`，上传 artifact `vectors-report-<os>-<sha>`（保留 30 天） |
+| `golden-vectors` | 三平台矩阵，`fail-fast: false` | 每平台 `向量 152 条：通过 152，失败 0，待实现 0`，上传 artifact `vectors-report-<os>-<sha>`（保留 30 天） |
 | `verdict-consistency` | ubuntu，`needs: [golden-vectors]` | 下载三个 artifact 到 `reports/`，跑 `python3 tools/ci/compare_verdicts.py reports` |
 
 `verdict-consistency` 的三种结果，含义完全不同：
 
 | 输出 | 退出码 | 含义 |
 |---|---|---|
-| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位。**不要拿它与上一个版本比对**：摘要覆盖「用例 ID + 状态」，新增/删除向量必然改变它（M0 时 98 条 → `f573cf9de746`；补入 `hkdf_sha256` 后 109 条 → `aec08f7118a0`；补入 `aes256gcm` 后 121 条 → `8d25210b3c4b`；补入 `argon2id` 后 131 条 → `3b05916cd8a2`；补入 `keyring` 后 144 条 → `52da6d468671`；补入 `db_open` 后 151 条 → `8d3735a894e6`；补入 `balance_replay` 后 158 条 → `732819dd17d7`）。有意义的是「三个平台彼此相同」 |
+| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位。**不要拿它与上一个版本比对**：摘要覆盖「用例 ID + 状态」，新增/删除向量必然改变它（M0 时 98 条 → `f573cf9de746`；补入 `hkdf_sha256` 后 109 条 → `aec08f7118a0`；补入 `aes256gcm` 后 121 条 → `8d25210b3c4b`；补入 `argon2id` 后 131 条 → `3b05916cd8a2`；补入 `keyring` 后 144 条 → `52da6d468671`；补入 `db_open` 后 151 条 → `8d3735a894e6`；补入 `balance_replay` 后 158 条 → `732819dd17d7`；容器裁决替换为 §3.3 五套件后 152 条 → `f179ad88a251`）。有意义的是「三个平台彼此相同」 |
 | `✗ 只找到 1 份报告，无法做跨平台比对` | 2 | **接线问题**，不是代码问题：`upload-artifact` 的 `name` 与 `download-artifact` 的 `pattern` 对不上，或 matrix 少跑了一个平台。这条被刻意做成失败而不是跳过 —— 「只跑了一个平台」不该被当成「三个平台一致」 |
 | `✗ 跨平台判定不一致。逐条对比：` | 1 | **真的有平台差异**。报告会逐条列出 `用例 ID: 平台A=pass vs 平台B=fail` |
 

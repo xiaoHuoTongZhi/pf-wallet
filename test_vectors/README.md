@@ -73,9 +73,11 @@ test_vectors/
 
 | 套件 | 覆盖 |
 | --- | --- |
-| `container_header` | 76 字节文件头的字节布局、魔数、算法 ID、取值约束 |
-| `container_trailer` | 40 字节文件尾 + 密文摘要校验（「损坏」vs「密码错」的可区分性） |
-| `container_layout` | 文件区段切分与严格长度校验 |
+| `container_constants` | §3.3 容器格式发布常量快照（魔数 / 头部布局 / 长度约束 / flags 位 / 算法 ID；期望值为规格人工转录） |
+| `container_header` | §3.3 128 字节分块容器的文件头：字节布局（48 固定 + 变量区）、CRC32、featureFlags 位语义、CRC 篡改 / 魔数错 / 版本过高 / 未知 flag 位四类错误分流 |
+| `container_trailer`→`container_digest` | 40 字节文件尾已被 §3.3 的 32 字节 contentDigest **替换**：免密完整性、覆盖边界 [48..长度-32) 本身是契约、「损坏」vs「密码错」的可区分性 |
+| `container_layout` | §3.3 密文区切分（chunkLen + chunkNonce + box）逐段指纹、截断与尾部私货拒绝 |
+| `container_file` | 完整文件字节级断言（附录 B pfb-file 落地）：KDF + 分块 + 链式 AAD（首块 prevTag = 32 个 0x00）、三态错误分流 |
 | `kdf_params` | Argon2id 参数范围（安全边界）与三套预设 |
 | `ulid` | ULID 编码/解析/合法性/同毫秒单调性 |
 | `money` | 定点金额的渲染、解析、求和与币种相等性 |
@@ -99,9 +101,20 @@ SQLCipher 打开流程向量由 `tools/golden_vectors_gen/db_open.py` 生成
 （期望值为规格 §3.4 原文的人工转录 —— 与 NIST 锚点同理，来源是文档而非实现）；
 余额推演向量由 `tools/golden_vectors_gen/balance_replay.py` 生成
 （期望值由独立 Python 实现推演，与 Dart 的 `BalanceEngine` 无共享代码；
-生成器内部自带「增量 == 全量重算」自检，自检不过则拒绝产文件）。
+生成器内部自带「增量 == 全量重算」自检，自检不过则拒绝产文件）；
+容器五套件由 `tools/golden_vectors_gen/container_pfb.py` 生成
+（Python `cryptography` + `argon2-cffi` + 手工打包独立算出全部字节；
+生成器内部自带 seal→open 往返与篡改拦截自检）；
+导出载荷向量由 `tools/golden_vectors_gen/export_payload.py` 生成
+（Python 标准库 json / hashlib 独立编码，自带解析回读与哈希重算自检）。
 
-**全部 34 个驱动均已实现、均有向量引用，pending 为 0。**
+**2026-09-17 容器裁决**：M0 曾按简化占位实现锁了 76 字节 "PFB1" 单块容器的
+三套向量。落实导出器时确认与规格 §3.3（128 字节分块格式：noncePrefix + 1 MiB
+分块 + 链式 AAD + 32 字节 contentDigest）冲突，裁决 §3.3 为唯一 v1 —— 76B
+版本从未发布过任何文件，旧三套向量整体替换为上表五套件，无迁移负担。
+同日裁决：manifest `contentHash` 覆盖口径 = **记录行**（不含 end 行，否则自指）。
+
+**全部 36 个驱动均已实现、均有向量引用，pending 为 0。**
 有状态 Keyring 服务（初始化 / 解锁 / 失败计数 / 对接 flutter_secure_storage）
 不在向量体系内 —— 它的本质是平台与 UI 编排，属于 M2；
 其依赖的纯组合规则（本目录的 `keyring` 套件）已被锁死。

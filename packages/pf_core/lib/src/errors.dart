@@ -91,6 +91,9 @@ abstract final class PfErrorCode {
   /// 分卷缺失或不完整。
   static const String ioVolumeIncomplete = 'PFI_E_VOLUME';
 
+  /// 导出自校验失败（写出的文件读不回来）。
+  static const String ioSelfCheckFailed = 'PFI_E_SELF_CHECK';
+
   // ---- PFC：领域层 ----
   /// 跨币种运算。
   static const String moneyCurrencyMismatch = 'PFC_E_CURRENCY_MISMATCH';
@@ -342,6 +345,17 @@ final class ImportExportError extends PfError {
         code: PfErrorCode.ioVolumeIncomplete,
         message: '分卷不完整：期望 $expected 卷，实际 $found 卷',
         userMessage: '分卷备份不完整，缺少部分分卷文件。请把所有分卷放在同一目录后重试。',
+      );
+
+  /// 导出自校验失败：刚写出的文件无法读回解密。文件已被删除，不留半成品。
+  static ImportExportError selfCheckFailed({required String reason, Object? cause}) =>
+      ImportExportError(
+        code: PfErrorCode.ioSelfCheckFailed,
+        message: '导出自校验失败：$reason',
+        userMessage:
+            '导出没有成功（写出的文件无法通过完整性校验），可能是存储介质异常。'
+            '没有留下损坏的文件，请更换存储位置后重试。',
+        cause: cause,
       );
 }
 
