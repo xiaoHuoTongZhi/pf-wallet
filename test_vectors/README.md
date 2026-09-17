@@ -96,9 +96,12 @@ Keyring 向量由 `tools/golden_vectors_gen/keyring.py` 生成
 （Python 标准库 hmac 手拼 HKDF × `cryptography` 交叉核对，AES-GCM 走
 `cryptography` × `pycryptodome` 双实现）；
 SQLCipher 打开流程向量由 `tools/golden_vectors_gen/db_open.py` 生成
-（期望值为规格 §3.4 原文的人工转录 —— 与 NIST 锚点同理，来源是文档而非实现）。
+（期望值为规格 §3.4 原文的人工转录 —— 与 NIST 锚点同理，来源是文档而非实现）；
+余额推演向量由 `tools/golden_vectors_gen/balance_replay.py` 生成
+（期望值由独立 Python 实现推演，与 Dart 的 `BalanceEngine` 无共享代码；
+生成器内部自带「增量 == 全量重算」自检，自检不过则拒绝产文件）。
 
-**全部 33 个驱动均已实现、均有向量引用，pending 为 0。**
+**全部 34 个驱动均已实现、均有向量引用，pending 为 0。**
 有状态 Keyring 服务（初始化 / 解锁 / 失败计数 / 对接 flutter_secure_storage）
 不在向量体系内 —— 它的本质是平台与 UI 编排，属于 M2；
 其依赖的纯组合规则（本目录的 `keyring` 套件）已被锁死。

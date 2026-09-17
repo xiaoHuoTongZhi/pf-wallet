@@ -1,0 +1,482 @@
+{
+  "schemaVersion": 1,
+  "suite": "balance_replay",
+  "title": "余额推演",
+  "description": "锁死 §2.3 余额语义（支出/收入/转账双腿/手续费/软删回退/信用卡/统计口径）与 §2.1 冗余列 day_key/month_key 的派生。期望值由本脚本按规格独立实现，与 Dart 侧 BalanceEngine / TxnTime 独立会合。",
+  "cases": [
+    {
+      "id": "db.balance.replay.expense-income",
+      "kind": "db.balance.replay",
+      "title": "支出与收入的单腿推演",
+      "milestone": "M1",
+      "input": {
+        "accounts": [
+          {
+            "id": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "openingMinor": 100000
+          }
+        ],
+        "ops": [
+          {
+            "op": "txn",
+            "id": "0SF7ENWDAHRZ6DMV29GQY5CKT1",
+            "type": 1,
+            "amountMinor": 3500,
+            "accountId": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "occurredAt": 1789000000000,
+            "tzOffsetMin": 480
+          },
+          {
+            "op": "txn",
+            "id": "02DMV29DQY5CKT18FPX4BJS07E",
+            "type": 2,
+            "amountMinor": 20000,
+            "accountId": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "occurredAt": 1789086400000,
+            "tzOffsetMin": 480
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "balances": {
+            "05TKT1EFPNVBJS07MBR3AHRZ6D": {
+              "balanceMinor": 116500,
+              "balanceAsOf": 1789086400000
+            }
+          },
+          "summary": {
+            "incomeMinor": 20000,
+            "expenseMinor": 3500,
+            "transferMinor": 0,
+            "feeMinor": 0
+          },
+          "dayKeys": [
+            {
+              "id": "0SF7ENWDAHRZ6DMV29GQY5CKT1",
+              "dayKey": "2026-09-10",
+              "monthKey": "2026-09"
+            },
+            {
+              "id": "02DMV29DQY5CKT18FPX4BJS07E",
+              "dayKey": "2026-09-11",
+              "monthKey": "2026-09"
+            }
+          ]
+        }
+      },
+      "notes": "§2.3：支出 -amount、收入 +amount；summary 只含收支。",
+      "tags": [
+        "db",
+        "balance"
+      ]
+    },
+    {
+      "id": "db.balance.replay.transfer-fee",
+      "kind": "db.balance.replay",
+      "title": "转账双腿：转出 -(amount+fee)，转入 +amount",
+      "milestone": "M1",
+      "input": {
+        "accounts": [
+          {
+            "id": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "openingMinor": 100000
+          },
+          {
+            "id": "02TGQY5CKN1SFPX4TBR07E6W3A",
+            "openingMinor": 0
+          }
+        ],
+        "ops": [
+          {
+            "op": "txn",
+            "id": "0KT18FPD4BJS07ENW3AHRZ6DMV",
+            "type": 3,
+            "amountMinor": 10000,
+            "feeMinor": 200,
+            "accountId": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "toAccountId": "02TGQY5CKN1SFPX4TBR07E6W3A",
+            "occurredAt": 1789000000000,
+            "tzOffsetMin": 480
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "balances": {
+            "05TKT1EFPNVBJS07MBR3AHRZ6D": {
+              "balanceMinor": 89800,
+              "balanceAsOf": 1789000000000
+            },
+            "02TGQY5CKN1SFPX4TBR07E6W3A": {
+              "balanceMinor": 10000,
+              "balanceAsOf": 1789000000000
+            }
+          },
+          "summary": {
+            "incomeMinor": 0,
+            "expenseMinor": 200,
+            "transferMinor": 10000,
+            "feeMinor": 200
+          },
+          "dayKeys": [
+            {
+              "id": "0KT18FPD4BJS07ENW3AHRZ6DMV",
+              "dayKey": "2026-09-10",
+              "monthKey": "2026-09"
+            }
+          ]
+        }
+      },
+      "notes": "§2.3 fee_minor 注释：手续费由转出账户额外承担；统计口径计入支出。",
+      "tags": [
+        "db",
+        "balance",
+        "transfer"
+      ]
+    },
+    {
+      "id": "db.balance.replay.credit-card",
+      "kind": "db.balance.replay",
+      "title": "信用卡消费使余额变小、还款（转入）使余额变大",
+      "milestone": "M1",
+      "input": {
+        "accounts": [
+          {
+            "id": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "openingMinor": 100000
+          },
+          {
+            "id": "0ATHZ6DTVNVGQY5CKBR8FPX4BJ",
+            "openingMinor": 0,
+            "type": 3,
+            "creditLimitMinor": 50000
+          }
+        ],
+        "ops": [
+          {
+            "op": "txn",
+            "id": "007ENW3DHRZ6DMV29GQY5CKT19",
+            "type": 1,
+            "amountMinor": 3500,
+            "accountId": "0ATHZ6DTVNVGQY5CKBR8FPX4BJ",
+            "occurredAt": 1789000000000,
+            "tzOffsetMin": 480
+          },
+          {
+            "op": "txn",
+            "id": "0DMV29GDY5CKT18FPX4BJS07XN",
+            "type": 3,
+            "amountMinor": 1000,
+            "accountId": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "toAccountId": "0ATHZ6DTVNVGQY5CKBR8FPX4BJ",
+            "occurredAt": 1789086400000,
+            "tzOffsetMin": 480
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "balances": {
+            "05TKT1EFPNVBJS07MBR3AHRZ6D": {
+              "balanceMinor": 99000,
+              "balanceAsOf": 1789086400000
+            },
+            "0ATHZ6DTVNVGQY5CKBR8FPX4BJ": {
+              "balanceMinor": -2500,
+              "balanceAsOf": 1789086400000
+            }
+          },
+          "summary": {
+            "incomeMinor": 0,
+            "expenseMinor": 3500,
+            "transferMinor": 1000,
+            "feeMinor": 0
+          },
+          "dayKeys": [
+            {
+              "id": "007ENW3DHRZ6DMV29GQY5CKT19",
+              "dayKey": "2026-09-10",
+              "monthKey": "2026-09"
+            },
+            {
+              "id": "0DMV29GDY5CKT18FPX4BJS07XN",
+              "dayKey": "2026-09-11",
+              "monthKey": "2026-09"
+            }
+          ]
+        }
+      },
+      "notes": "§2.3：信用卡无特殊代码路径 —— 负余额即负债，净资产 = Σ cached_balance 统一成立。",
+      "tags": [
+        "db",
+        "balance",
+        "credit"
+      ]
+    },
+    {
+      "id": "db.balance.replay.edit-retype",
+      "kind": "db.balance.replay",
+      "title": "编辑切换类型：旧值回退 + 新值施加",
+      "milestone": "M1",
+      "input": {
+        "accounts": [
+          {
+            "id": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "openingMinor": 0
+          },
+          {
+            "id": "02TGQY5CKN1SFPX4TBR07E6W3A",
+            "openingMinor": 0
+          },
+          {
+            "id": "0ATHZ6DTVNVGQY5CKBR8FPX4BJ",
+            "openingMinor": 0,
+            "type": 3,
+            "creditLimitMinor": 50000
+          }
+        ],
+        "ops": [
+          {
+            "op": "txn",
+            "id": "0T18FPXDBJS07ENW3AHRZ6DGV2",
+            "type": 1,
+            "amountMinor": 3000,
+            "accountId": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "occurredAt": 1789000000000,
+            "tzOffsetMin": 480
+          },
+          {
+            "op": "edit",
+            "id": "0T18FPXDBJS07ENW3AHRZ6DGV2",
+            "type": 3,
+            "amountMinor": 3000,
+            "accountId": "02TGQY5CKN1SFPX4TBR07E6W3A",
+            "toAccountId": "0ATHZ6DTVNVGQY5CKBR8FPX4BJ",
+            "occurredAt": 1789086400000,
+            "tzOffsetMin": 480
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "balances": {
+            "05TKT1EFPNVBJS07MBR3AHRZ6D": {
+              "balanceMinor": 0,
+              "balanceAsOf": 0
+            },
+            "02TGQY5CKN1SFPX4TBR07E6W3A": {
+              "balanceMinor": -3000,
+              "balanceAsOf": 1789086400000
+            },
+            "0ATHZ6DTVNVGQY5CKBR8FPX4BJ": {
+              "balanceMinor": 3000,
+              "balanceAsOf": 1789086400000
+            }
+          },
+          "summary": {
+            "incomeMinor": 0,
+            "expenseMinor": 0,
+            "transferMinor": 3000,
+            "feeMinor": 0
+          },
+          "dayKeys": [
+            {
+              "id": "0T18FPXDBJS07ENW3AHRZ6DGV2",
+              "dayKey": "2026-09-11",
+              "monthKey": "2026-09"
+            }
+          ]
+        }
+      },
+      "notes": "编辑 = 先按旧值回退、再按新值施加；账户/类型变化全部覆盖。",
+      "tags": [
+        "db",
+        "balance",
+        "edit"
+      ]
+    },
+    {
+      "id": "db.balance.replay.delete-reverse",
+      "kind": "db.balance.replay",
+      "title": "软删回退该笔影响，缓存回到推演起点",
+      "milestone": "M1",
+      "input": {
+        "accounts": [
+          {
+            "id": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "openingMinor": 50000
+          }
+        ],
+        "ops": [
+          {
+            "op": "txn",
+            "id": "07ENW3ADRZ6DMV29GQY54KT18F",
+            "type": 1,
+            "amountMinor": 12000,
+            "accountId": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "occurredAt": 1789000000000,
+            "tzOffsetMin": 480
+          },
+          {
+            "op": "delete",
+            "id": "07ENW3ADRZ6DMV29GQY54KT18F"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "balances": {
+            "05TKT1EFPNVBJS07MBR3AHRZ6D": {
+              "balanceMinor": 50000,
+              "balanceAsOf": 0
+            }
+          },
+          "summary": {
+            "incomeMinor": 0,
+            "expenseMinor": 0,
+            "transferMinor": 0,
+            "feeMinor": 0
+          },
+          "dayKeys": []
+        }
+      },
+      "notes": "软删 = 从推演中移除；全量重算对没有生效交易的账户归位到 opening。",
+      "tags": [
+        "db",
+        "balance",
+        "delete"
+      ]
+    },
+    {
+      "id": "db.balance.replay.excluded-stats",
+      "kind": "db.balance.replay",
+      "title": "excluded_from_stats 不进收支合计，但余额照常推演",
+      "milestone": "M1",
+      "input": {
+        "accounts": [
+          {
+            "id": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "openingMinor": 1000
+          }
+        ],
+        "ops": [
+          {
+            "op": "txn",
+            "id": "04BJS07DNW3AHRZ6DMV29GQY5C",
+            "type": 1,
+            "amountMinor": 700,
+            "accountId": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "occurredAt": 1789000000000,
+            "tzOffsetMin": 480,
+            "excludedFromStats": true
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "balances": {
+            "05TKT1EFPNVBJS07MBR3AHRZ6D": {
+              "balanceMinor": 300,
+              "balanceAsOf": 1789000000000
+            }
+          },
+          "summary": {
+            "incomeMinor": 0,
+            "expenseMinor": 0,
+            "transferMinor": 0,
+            "feeMinor": 0
+          },
+          "dayKeys": [
+            {
+              "id": "04BJS07DNW3AHRZ6DMV29GQY5C",
+              "dayKey": "2026-09-10",
+              "monthKey": "2026-09"
+            }
+          ]
+        }
+      },
+      "notes": "钱确实动了、只是不计收支 —— 两个口径必须分开。",
+      "tags": [
+        "db",
+        "balance",
+        "stats"
+      ]
+    },
+    {
+      "id": "db.balance.replay.day-key-tz",
+      "kind": "db.balance.replay",
+      "title": "day_key/month_key 按 (occurred_at, tz_offset) 拆解：跨日与负偏移",
+      "milestone": "M1",
+      "input": {
+        "accounts": [
+          {
+            "id": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "openingMinor": 0
+          }
+        ],
+        "ops": [
+          {
+            "op": "txn",
+            "id": "0HRZ6DMD29MQY5CKT18FPX4BJS",
+            "type": 1,
+            "amountMinor": 100,
+            "accountId": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "occurredAt": 1789028800000,
+            "tzOffsetMin": 480
+          },
+          {
+            "op": "txn",
+            "id": "0DFV29GDY5CKT18FPX4BJS37EN",
+            "type": 1,
+            "amountMinor": 100,
+            "accountId": "05TKT1EFPNVBJS07MBR3AHRZ6D",
+            "occurredAt": 1788985600000,
+            "tzOffsetMin": -300
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "balances": {
+            "05TKT1EFPNVBJS07MBR3AHRZ6D": {
+              "balanceMinor": -200,
+              "balanceAsOf": 1789028800000
+            }
+          },
+          "summary": {
+            "incomeMinor": 0,
+            "expenseMinor": 200,
+            "transferMinor": 0,
+            "feeMinor": 0
+          },
+          "dayKeys": [
+            {
+              "id": "0HRZ6DMD29MQY5CKT18FPX4BJS",
+              "dayKey": "2026-09-10",
+              "monthKey": "2026-09"
+            },
+            {
+              "id": "0DFV29GDY5CKT18FPX4BJS37EN",
+              "dayKey": "2026-09-09",
+              "monthKey": "2026-09"
+            }
+          ]
+        }
+      },
+      "notes": "§2.1 的关键设计：冗余列由录入设备时区决定，跨端统计结果恒定。",
+      "tags": [
+        "db",
+        "balance",
+        "tz"
+      ]
+    }
+  ]
+}

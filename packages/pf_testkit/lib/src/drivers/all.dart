@@ -12,6 +12,7 @@ import 'm0_merge.dart';
 import 'm0_money.dart';
 import 'm0_params.dart';
 import 'm1_aesgcm.dart';
+import 'm1_balance.dart';
 import 'm1_hkdf.dart';
 import 'm2_crypto.dart';
 import 'm2_db.dart';
@@ -52,9 +53,10 @@ List<VectorDriver> defaultVectorDrivers() => const <VectorDriver>[
   KeyringKeyCheckOpenDriver(),
   KeyringRecoveryWrapDriver(),
   KeyringRecoveryUnwrapDriver(),
-  // ---- 数据层打开流程（纯 Dart 编排，真实 SQLCipher 驱动在 M2 对接）----
+  // ---- 数据层（纯 Dart 编排，真实 SQLCipher 驱动在 M2 对接）----
   DbOpenPlanDriver(),
   DbOpenClassifyDriver(),
+  DbBalanceReplayDriver(),
 ];
 
 /// 标准注册表。

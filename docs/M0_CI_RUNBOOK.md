@@ -92,13 +92,13 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 ### 0.3 本机复检结果（改动后）
 
 ```
-format     Formatted 92 files (0 changed)        ← M0 当时 76；判定线是 0 changed
+format     Formatted 110 files (0 changed)       ← M0 当时 76；判定线是 0 changed
 analyze    No issues found!                      （--fatal-infos --fatal-warnings）
 guards     6 项检查，error=0 warning=13          （deps 11 / manifest 2，均为刻意保留）
-test       448 项，全通过：
-             pf_core 91 / pf_crypto 165 / pf_data 32 / pf_io 23 / pf_testkit 57 / guards 80
-vectors    151 条通过，失败 0，待实现 0，判定摘要 8d3735a894e6…
-vectors:cov 33 个驱动全部有向量引用（反例：--vectors 指向单个套件 → 退出码 1，列出 21 个）
+test       493 项，全通过：
+             pf_core 91 / pf_crypto 165 / pf_data 77 / pf_io 23 / pf_testkit 57 / guards 80
+vectors    158 条通过，失败 0，待实现 0，判定摘要 732819dd17d7…
+vectors:cov 34 个驱动全部有向量引用（反例：--vectors 指向单个套件 → 退出码 1，列出 21 个）
 新增工具    assert_test_report.dart 三条分支（0/1/2）逐一实测通过
 ```
 
@@ -130,6 +130,14 @@ vectors:cov 33 个驱动全部有向量引用（反例：--vectors 指向单个�
 > `pf_data 19 → 32`（+13 条 `open_flow_test.dart`）、
 > 向量 `144 → 151`（+7 条 `db_open`：plan 3（默认 / iOS 明文头 / 密钥过短）+
 > classify 4（NOTADB 双分支 / malformed / 一般失败））。
+> M1 数据层第二笔（`pf_data`：schema v1 建表 DDL + `db.dart` 的 `PfDb` 抽象 +
+> 迁移执行器）带来 `91 → 94`（+3 个 `.dart` 实现；+3 个 `.dart` 测试与假库基建
+> `recording_db.dart`）。第三笔（三仓储 + 余额推演引擎 + 全量重算）带来
+> `94 → 106`（+6 个 `.dart` 实现 + 2 个 `.dart` 测试 + 1 个驱动 `m1_balance.dart`），
+> `pf_data 32 → 77`（+45：`schema_v1_test` / `migration_runner_test` /
+> `balance_engine_test` / `repositories_test`），
+> 向量 `151 → 158`（+7 条 `balance_replay`：基础三类型 + 转账双腿 + 软删回退 +
+> 编辑改向 + 随机 1000 笔增量/全量交叉；期望值由独立 Python 实现生成）。
 > 注意 Argon2id 的原生库供给方案最终定为**不用原生库**：走纯 Dart 的
 > `package:cryptography/dart.dart` 的 `DartArgon2id`（零原生依赖，6 平台一致，
 > 也能在 `dart test` 的 CI 上跑），因此 README 与 §1.5 里「走 libsodium」的
@@ -137,7 +145,7 @@ vectors:cov 33 个驱动全部有向量引用（反例：--vectors 指向单个�
 > 记录它是因为数字会一直变，而**判定线不变** —— 追数字本身没有意义，
 > 有意义的是知道「它为什么变了」。
 >
-> `verdictDigest` 从 `f573cf9de746…` 变成 `aec08f7118a0…`、再到 `8d25210b3c4b…`、再到 `3b05916cd8a2…`、再到 `52da6d468671…`、再到 `8d3735a894e6…` 是**必然**的：
+> `verdictDigest` 从 `f573cf9de746…` 变成 `aec08f7118a0…`、再到 `8d25210b3c4b…`、再到 `3b05916cd8a2…`、再到 `52da6d468671…`、再到 `8d3735a894e6…`、再到 `732819dd17d7…` 是**必然**的：
 > 它覆盖「用例 ID + 状态」，新增用例就会变。
 > 所以「摘要与上一版相同」只在向量集合没变时才有意义；
 > 向量集合变了以后，判据是「失败 0 / 待实现 0」与「三平台摘要彼此相同」。
@@ -463,7 +471,7 @@ PY
 | 检查格式 | `Formatted 87 files (0 changed)`（M0 当时是 76；判定线是 `0 changed`，不是这个数字） |
 | 静态分析 | 每个包 `No issues found!` |
 | 六个 guards | 每项 `error=0`（`deps` / `banned-api` / `logging` / `manifest` / `version` / `tracked-paths`） |
-| 向量覆盖检查 | `✓ 覆盖检查：33 个驱动全部有向量引用`（见 §3 的「P1 · 向量覆盖检查」） |
+| 向量覆盖检查 | `✓ 覆盖检查：34 个驱动全部有向量引用`（见 §3 的「P1 · 向量覆盖检查」） |
 | 上传门禁报告 | artifact `guards-report-<sha>`，内含 `deps/banned-api/logging/manifest/version/tracked-paths.json` |
 
 失败时最常见的五条：格式不一致（本机没跑 `dart format` 就提交）、
@@ -509,7 +517,7 @@ PY
 
 | 输出 | 退出码 | 含义 |
 |---|---|---|
-| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位。**不要拿它与上一个版本比对**：摘要覆盖「用例 ID + 状态」，新增/删除向量必然改变它（M0 时 98 条 → `f573cf9de746`；补入 `hkdf_sha256` 后 109 条 → `aec08f7118a0`；补入 `aes256gcm` 后 121 条 → `8d25210b3c4b`；补入 `argon2id` 后 131 条 → `3b05916cd8a2`；补入 `keyring` 后 144 条 → `52da6d468671`；补入 `db_open` 后 151 条 → `8d3735a894e6`）。有意义的是「三个平台彼此相同」 |
+| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位。**不要拿它与上一个版本比对**：摘要覆盖「用例 ID + 状态」，新增/删除向量必然改变它（M0 时 98 条 → `f573cf9de746`；补入 `hkdf_sha256` 后 109 条 → `aec08f7118a0`；补入 `aes256gcm` 后 121 条 → `8d25210b3c4b`；补入 `argon2id` 后 131 条 → `3b05916cd8a2`；补入 `keyring` 后 144 条 → `52da6d468671`；补入 `db_open` 后 151 条 → `8d3735a894e6`；补入 `balance_replay` 后 158 条 → `732819dd17d7`）。有意义的是「三个平台彼此相同」 |
 | `✗ 只找到 1 份报告，无法做跨平台比对` | 2 | **接线问题**，不是代码问题：`upload-artifact` 的 `name` 与 `download-artifact` 的 `pattern` 对不上，或 matrix 少跑了一个平台。这条被刻意做成失败而不是跳过 —— 「只跑了一个平台」不该被当成「三个平台一致」 |
 | `✗ 跨平台判定不一致。逐条对比：` | 1 | **真的有平台差异**。报告会逐条列出 `用例 ID: 平台A=pass vs 平台B=fail` |
 
@@ -1098,6 +1106,27 @@ gh api repos/:owner/:repo/actions/permissions
 **修复方向**：本仓库是单人使用，不接外部 PR 是最省事的做法。
 若确实要接，把 `pull_request` 触发改为 `pull_request_target`（**注意这会让 PR 拿到写权限，
 是安全事件高发点**），或干脆要求先合并到内部分支再跑。**默认建议：不接 fork PR。**
+
+### P10 Windows 上 PowerShell 调 `git push` 静默失败（exit 128 但看不到原因）`[已验 · 2026-09-17]`
+
+**症状**：在 PowerShell（无论是交互还是被自动化工具包装）里跑 `git push origin main`，
+远端没收到提交，进程退出码 128，且**看不到任何报错文本** —— git 的诊断信息全走 stderr，
+而 PowerShell 的 `NativeCommandError` 包装/重定向链会把它们吞掉或转成不可读对象。
+`git ls-remote`、`git status` 等只走 stdout 的命令都正常，极具迷惑性：看起来像凭据问题，
+实际可能只是代理抖动或 stderr 通道损坏。
+
+**定位命令**（在系统 Git 自带的 bash 里跑，绕开 PowerShell 的 stderr 包装）：
+
+```bash
+'/c/Program Files/Git/bin/bash.exe' -lc "cd /d/workbuddy/pf-wallet && git push origin main 2>&1"
+```
+
+**修复方向 / 规则**：
+- 本仓库在 Windows 上做任何 git 写操作（push / commit 钩子输出检查），**一律用
+  `C:\Program Files\Git\bin\bash.exe -lc`**，不要经 PowerShell 直接调 git。
+- 判定推送成功的唯一标准是远端哈希：`git ls-remote origin main` 返回本地 HEAD 的哈希，
+  而不是 push 命令的退出码（PowerShell 下退出码也可能是假象）。
+- 若必须走 PowerShell，把 stdout/stderr 各自重定向到文件再读，不要依赖管道回显。
 
 ---
 
