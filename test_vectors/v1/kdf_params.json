@@ -33,7 +33,7 @@
       "milestone": "M0",
       "input": {
         "m": 262144,
-        "t": 3,
+        "t": 4,
         "p": 4,
         "saltLength": 16,
         "outputLength": 32
@@ -42,7 +42,7 @@
         "ok": true,
         "value": {
           "valid": true,
-          "describe": "m=256MiB t=3 p=4",
+          "describe": "m=256MiB t=4 p=4",
           "outputLength": 32,
           "saltLength": 16
         }
@@ -340,7 +340,7 @@
         "ok": true,
         "value": {
           "mobile": "m=64MiB t=3 p=1",
-          "desktop": "m=256MiB t=3 p=4",
+          "desktop": "m=256MiB t=4 p=4",
           "export": "m=64MiB t=3 p=1",
           "mobileMemoryKiB": 65536,
           "desktopMemoryKiB": 262144,

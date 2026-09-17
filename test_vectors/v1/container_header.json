@@ -45,7 +45,7 @@
       "input": {
         "params": {
           "m": 262144,
-          "t": 3,
+          "t": 4,
           "p": 4,
           "saltLength": 16,
           "outputLength": 32
@@ -57,11 +57,11 @@
       "expect": {
         "ok": true,
         "value": {
-          "hex": "504642310001000000010001000400000000000300040010000c00100000000000000000000001941f297c00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000000000000000000000000000000",
+          "hex": "504642310001000000010001000400000000000400040010000c00100000000000000000000001941f297c00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000000000000000000000000000000",
           "lengthBytes": 76,
           "majorVersion": 1,
           "minorVersion": 0,
-          "kdfDescription": "m=256MiB t=3 p=4"
+          "kdfDescription": "m=256MiB t=4 p=4"
         }
       },
       "notes": "锁定「实际使用的参数必须写进文件头」这条规则。桌面端用 256 MiB 导出、手机端用 64 MiB 打开，全靠文件头里的实际值，而不是靠读方自己的默认值。",

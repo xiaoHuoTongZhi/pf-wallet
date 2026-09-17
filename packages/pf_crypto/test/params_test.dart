@@ -14,17 +14,17 @@ void main() {
       expect(() => params.validate(), returnsNormally);
     });
 
-    test('桌面端：256 MiB / t=3 / p=4', () {
+    test('桌面端：256 MiB / t=4 / p=4', () {
       const params = Argon2Params.desktopDefault;
       expect(params.memoryKiB, 262144);
-      expect(params.iterations, 3);
+      expect(params.iterations, 4);
       expect(params.parallelism, 4);
       expect(() => params.validate(), returnsNormally);
     });
 
     test('参数描述不含歧义（设置页直接展示）', () {
       expect(Argon2Params.mobileDefault.describe(), 'm=64MiB t=3 p=1');
-      expect(Argon2Params.desktopDefault.describe(), 'm=256MiB t=3 p=4');
+      expect(Argon2Params.desktopDefault.describe(), 'm=256MiB t=4 p=4');
     });
 
     test('盐 16 字节、输出 32 字节', () {

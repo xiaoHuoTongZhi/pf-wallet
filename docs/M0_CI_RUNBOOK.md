@@ -92,12 +92,12 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 ### 0.3 本机复检结果（改动后）
 
 ```
-format     Formatted 87 files (0 changed)        ← M0 当时 76；判定线是 0 changed
+format     Formatted 89 files (0 changed)        ← M0 当时 76；判定线是 0 changed
 analyze    No issues found!                      （--fatal-infos --fatal-warnings）
 guards     6 项检查，error=0 warning=13          （deps 11 / manifest 2，均为刻意保留）
-test       400 项，全通过：
-             pf_core 91 / pf_crypto 130 / pf_data 19 / pf_io 23 / pf_testkit 57 / guards 80
-vectors    121 条通过，失败 0，待实现 0，判定摘要 8d25210b3c4b…
+test       423 项，全通过：
+             pf_core 91 / pf_crypto 153 / pf_data 19 / pf_io 23 / pf_testkit 57 / guards 80
+vectors    131 条通过，失败 0，待实现 0，判定摘要 3b05916cd8a2…
 vectors:cov 27 个驱动全部有向量引用（反例：--vectors 指向单个套件 → 退出码 1，列出 21 个）
 新增工具    assert_test_report.dart 三条分支（0/1/2）逐一实测通过
 ```
@@ -115,10 +115,18 @@ vectors:cov 27 个驱动全部有向量引用（反例：--vectors 指向单个�
 > 第三个原语 `src/aesgcm.dart`（AES-256-GCM）带来 `84 → 87`（+3 个 `.dart`：
 > 实现 / 测试 / 驱动；生成脚本 `.py` 不计入）、`pf_crypto 98 → 130`（+32 条 `aesgcm_test.dart`）、
 > 向量 `109 → 121`（+12 条 `aes256gcm`，其中 8 条 seal / 4 条 open；含 NIST GCMVS 锚点）。
+> 第四个原语 `src/argon2id.dart`（Argon2id）带来 `87 → 89`（+2 个 `.dart`：实现 / 测试；
+> 驱动放在既有的 `drivers/m2_crypto.dart`，生成脚本 `.py` 不计入）、
+> `pf_crypto 130 → 153`（+23 条 `argon2id_test.dart`）、
+> 向量 `121 → 131`（+10 条 `argon2id`：三档 + 盐长 8/32 边界 + m/t/p 超上限 3 条 + 输入契约 2 条）。
+> 注意 Argon2id 的原生库供给方案最终定为**不用原生库**：走纯 Dart 的
+> `package:cryptography/dart.dart` 的 `DartArgon2id`（零原生依赖，6 平台一致，
+> 也能在 `dart test` 的 CI 上跑），因此 README 与 §1.5 里「走 libsodium」的
+> 旧描述已被更正。
 > 记录它是因为数字会一直变，而**判定线不变** —— 追数字本身没有意义，
 > 有意义的是知道「它为什么变了」。
 >
-> `verdictDigest` 从 `f573cf9de746…` 变成 `aec08f7118a0…`、再到 `8d25210b3c4b…` 是**必然**的：
+> `verdictDigest` 从 `f573cf9de746…` 变成 `aec08f7118a0…`、再到 `8d25210b3c4b…`、再到 `3b05916cd8a2…` 是**必然**的：
 > 它覆盖「用例 ID + 状态」，新增用例就会变。
 > 所以「摘要与上一版相同」只在向量集合没变时才有意义；
 > 向量集合变了以后，判据是「失败 0 / 待实现 0」与「三平台摘要彼此相同」。
@@ -483,14 +491,14 @@ PY
 
 | 作业 | 平台 | 预期 |
 |---|---|---|
-| `golden-vectors` | 三平台矩阵，`fail-fast: false` | 每平台 `向量 121 条：通过 121，失败 0，待实现 0`，上传 artifact `vectors-report-<os>-<sha>`（保留 30 天） |
+| `golden-vectors` | 三平台矩阵，`fail-fast: false` | 每平台 `向量 131 条：通过 131，失败 0，待实现 0`，上传 artifact `vectors-report-<os>-<sha>`（保留 30 天） |
 | `verdict-consistency` | ubuntu，`needs: [golden-vectors]` | 下载三个 artifact 到 `reports/`，跑 `python3 tools/ci/compare_verdicts.py reports` |
 
 `verdict-consistency` 的三种结果，含义完全不同：
 
 | 输出 | 退出码 | 含义 |
 |---|---|---|
-| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位。**不要拿它与上一个版本比对**：摘要覆盖「用例 ID + 状态」，新增/删除向量必然改变它（M0 时 98 条 → `f573cf9de746`；补入 `hkdf_sha256` 后 109 条 → `aec08f7118a0`；补入 `aes256gcm` 后 121 条 → `8d25210b3c4b`）。有意义的是「三个平台彼此相同」 |
+| `✓ 3 个平台的判定完全一致（xxxxxxxx…）` | 0 | 通过。括号里是 `verdictDigest` 前 16 位。**不要拿它与上一个版本比对**：摘要覆盖「用例 ID + 状态」，新增/删除向量必然改变它（M0 时 98 条 → `f573cf9de746`；补入 `hkdf_sha256` 后 109 条 → `aec08f7118a0`；补入 `aes256gcm` 后 121 条 → `8d25210b3c4b`；补入 `argon2id` 后 131 条 → `3b05916cd8a2`）。有意义的是「三个平台彼此相同」 |
 | `✗ 只找到 1 份报告，无法做跨平台比对` | 2 | **接线问题**，不是代码问题：`upload-artifact` 的 `name` 与 `download-artifact` 的 `pattern` 对不上，或 matrix 少跑了一个平台。这条被刻意做成失败而不是跳过 —— 「只跑了一个平台」不该被当成「三个平台一致」 |
 | `✗ 跨平台判定不一致。逐条对比：` | 1 | **真的有平台差异**。报告会逐条列出 `用例 ID: 平台A=pass vs 平台B=fail` |
 

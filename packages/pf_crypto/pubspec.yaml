@@ -15,10 +15,11 @@ dependencies:
   # SHA-256。选择它的理由见 lib/src/digest.dart —— 不是因为「最安全」，
   # 而是因为容器格式已经把 32 字节的 SHA-256 钉在了文件尾。
   crypto: ^3.0.6
-  # AES-256-GCM。方案 §1.5 钉死走纯 Dart 的 `cryptography`：
+  # AES-256-GCM 与 Argon2id。方案 §1.5 钉死走纯 Dart 的 `cryptography`：
   # 纯 Dart 实现能进 CI（6 端行为一致）；`package:crypto` 不含任何分组密码，
-  # 所以这一步引入它无可替代。libsaltsodium 的 `crypto_aead_aes256gcm`
+  # 所以这一步引入它无可替代。libsodium 的 `crypto_aead_aes256gcm`
   # 在 ARM 无 AES 指令时 `is_available()` 返回 false，不能作唯一实现。
+  # Argon2id 用同一依赖里的 `DartArgon2id`（见 src/argon2id.dart），同样零原生依赖。
   cryptography: ^2.6.0
   pf_core: ^0.1.0
 

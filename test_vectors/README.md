@@ -82,16 +82,20 @@ test_vectors/
 | `merge` | 记录版本裁决与收敛性（可交换 / 幂等 / 可结合） |
 | `hkdf_sha256` | HKDF-SHA256 的提取/扩展两阶段、缺省语义、块边界（RFC 5869 + 真实用途 MK→DBKey） |
 | `aes256gcm` | AES-256-GCM（NIST SP 800-38D）：96 位 nonce 主路径、非 96 位 nonce 边界（8 / 16 字节）、空明文 / 单字节明文 / AAD，以及三类认证失败（标签篡改 / 密文篡改 / AAD 不符）必须抛 `PFB_E_AUTH_FAILED` |
+| `argon2id` | Argon2id（RFC 9106，version 0x13）派生：§3.2 三档（P_DEFAULT / P_STRONG / P_MIN）、盐长度边界（8 / 32 字节），以及 m/t/p 超上限（`PFB_E_KDF_PARAMS`）与输入契约破坏（密码空 / 盐长不符 → `PFB_E_HEADER_INVALID`） |
 
-**M2 的加密向量（`kdf.argon2id.derive`、`keyring.wrap-dek`）刻意尚未入库。** 原因不是没时间，而是：
-它们的期望值必须由独立的参考实现生成（argon2 CLI / OpenSSL），
-而 M0 阶段还没有可信的产出通道。先摆一个空壳占位会得到一个
+AES-256-GCM 的驱动（`m1_aesgcm.dart`）与 Argon2id 的驱动
+（`m2_crypto.dart`，历史位置，实为纯 Dart、里程碑 M1）均已实现并入库。
+AES 向量由 `tools/golden_vectors_gen/aes256gcm.py` 生成
+（NIST GCMVS 锚点 + `cryptography` / `pycryptodome` 双实现复算）；
+Argon2id 向量由 `tools/golden_vectors_gen/argon2id.py` 生成
+（Python `argon2-cffi` 独立复算，RFC 9106 §5.3 的带 K/AD 锚点由 Dart 单测验证）。
+
+**仅剩 `keyring.wrap-dek` 尚未入库。** 原因不是没时间，而是：
+它的期望值必须由独立的参考实现生成，且它依赖 `flutter_secure_storage`
+（属于 M2 的 Keyring 工作，本次刻意不碰）。先摆一个空壳占位会得到一个
 「看起来覆盖了、实际什么都没测」的假绿灯 —— 那比缺覆盖危险得多。
-
-对应的驱动已经注册（见 `packages/pf_testkit/lib/src/drivers/m2_crypto.dart`），
-`kind` 契约已经固定，M2 落地时只需把 `isImplemented` 翻成 `true` 并补向量。
-AES-256-GCM 的驱动（`m1_aesgcm.dart`）已在 M1 实现并入库，向量由
-`tools/golden_vectors_gen/aes256gcm.py` 生成（NIST GCMVS 锚点 + `cryptography` / `pycryptodome` 双实现复算）。
+驱动已注册、`kind` 契约已固定，M2 落地时把 `isImplemented` 翻成 `true` 并补向量即可。
 
 ## 怎么跑
 

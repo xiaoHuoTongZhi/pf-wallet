@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "suite": "argon2id",
+  "title": "Argon2id 黄金测试向量",
+  "description": "Argon2id（RFC 9106，version 0x13）的密钥派生向量，输出固定 32 字节。\n期望值由 Python argon2-cffi（libargon2 绑定）独立复算，与 Dart 侧 package:cryptography 的 DartArgon2id 是两套独立实现。\nRFC 9106 §5.3 的带 K/AD 锚点不在本文件（argon2-cffi 无 K/AD 参数），由 packages/pf_crypto/test/argon2id_test.dart 用 DartArgon2id 直接验证。\n覆盖 §3.2 三档（P_DEFAULT/P_STRONG/P_MIN）、盐长度边界（8/32 字节）、以及 m/t/p 超上限（PFB_E_KDF_PARAMS）与输入契约破坏（密码空 / 盐长不符 → PFB_E_HEADER_INVALID）。",
+  "cases": [
+    {
+      "id": "kdf.argon2id.derive.preset-default",
+      "kind": "kdf.argon2id.derive",
+      "title": "§3.2 P_DEFAULT（64 MiB / t=3 / p=1）—— 移动端与导出的默认档",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "saltHex": "706677616c6c657473616c7430313233",
+        "params": {
+          "m": 65536,
+          "t": 3,
+          "p": 1,
+          "saltLength": 16,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "derivedKeyHex": "87c35005ac1823ce375b183ce0d40ab135c02cb3ed1bf97a8f3045c57f29fd18"
+        }
+      },
+      "notes": "锁定默认档参数。改这个数字等于改所有用户的解锁耗时与安全性，必须显式改向量。",
+      "tags": [
+        "crypto",
+        "preset"
+      ]
+    },
+    {
+      "id": "kdf.argon2id.derive.preset-strong",
+      "kind": "kdf.argon2id.derive",
+      "title": "§3.2 P_STRONG（256 MiB / t=4 / p=4）—— 桌面端加强档",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "saltHex": "706677616c6c657473616c7430313233",
+        "params": {
+          "m": 262144,
+          "t": 4,
+          "p": 4,
+          "saltLength": 16,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "derivedKeyHex": "6dc4af5dd74bccde9f83ec9588c26a8745b2dcf5ee19a1ff5cfd4ad3be5ae040"
+        }
+      },
+      "notes": "锁定加强档。p=4 会把多核打满，锁住它防止有人「顺手」把移动端也调上来。",
+      "tags": [
+        "crypto",
+        "preset"
+      ]
+    },
+    {
+      "id": "kdf.argon2id.derive.preset-min",
+      "kind": "kdf.argon2id.derive",
+      "title": "§3.2 P_MIN（19 MiB / t=2 / p=1）—— 允许下限（OWASP 建议）",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "saltHex": "706677616c6c657473616c7430313233",
+        "params": {
+          "m": 19456,
+          "t": 2,
+          "p": 1,
+          "saltLength": 16,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "derivedKeyHex": "06ba803c1ec81a96fc419982b50a38518f2db012bc8605ea1a295f49ebcf97cc"
+        }
+      },
+      "notes": "锁定允许下限。低于它 validate 直接拒绝，因此这档本身必须能算出来。",
+      "tags": [
+        "crypto",
+        "preset",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.argon2id.derive.salt-8-byte",
+      "kind": "kdf.argon2id.derive",
+      "title": "盐长度下限 8 字节（minSaltLength）",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "saltHex": "1011121314151617",
+        "params": {
+          "m": 65536,
+          "t": 3,
+          "p": 1,
+          "saltLength": 8,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "derivedKeyHex": "e829ba7153d8b1924c183281916f172fa17bc1ea5e36d21c162b9e2faf490a00"
+        }
+      },
+      "notes": "守盐长度下限：8 字节是 Argon2 规范允许的最小盐。salt.length 必须与 params.saltLength 一致。",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.argon2id.derive.salt-32-byte",
+      "kind": "kdf.argon2id.derive",
+      "title": "非默认盐长 32 字节",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "saltHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "params": {
+          "m": 65536,
+          "t": 3,
+          "p": 1,
+          "saltLength": 32,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "derivedKeyHex": "6ed12d7d594a6ae56c7ad1725982ae0d41317bd2b239dd1e0916d913d4da0757"
+        }
+      },
+      "notes": "守「盐长不等于 16 也要正确」：salt 长度由头里的 saltLength 决定，不是写死的 16。",
+      "tags": [
+        "crypto",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.argon2id.derive.params.memory-over-limit",
+      "kind": "kdf.argon2id.derive",
+      "title": "内存参数超上限（构造文件声明 16 GiB）",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "saltHex": "706677616c6c657473616c7430313233",
+        "params": {
+          "m": 16777216,
+          "t": 3,
+          "p": 1,
+          "saltLength": 16,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "notes": "这是 OOM 攻击场景：文件头声明 m=16 GiB，受害设备打开瞬间就会被榨干内存。必须在解析头时就拒绝，不能等到派生。",
+      "tags": [
+        "crypto",
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.argon2id.derive.params.iterations-over-limit",
+      "kind": "kdf.argon2id.derive",
+      "title": "迭代次数超上限（t=17）",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "saltHex": "706677616c6c657473616c7430313233",
+        "params": {
+          "m": 65536,
+          "t": 17,
+          "p": 1,
+          "saltLength": 16,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "notes": "迭代次数直接乘在耗时上：t=17 会把一次解锁拖到几十秒。上限必须卡死。",
+      "tags": [
+        "crypto",
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.argon2id.derive.params.parallelism-over-limit",
+      "kind": "kdf.argon2id.derive",
+      "title": "并行度超上限（p=9）",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "saltHex": "706677616c6c657473616c7430313233",
+        "params": {
+          "m": 65536,
+          "t": 3,
+          "p": 9,
+          "saltLength": 16,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_KDF_PARAMS"
+      },
+      "notes": "并行度上限 8：p 过大在多核上会把设备打满、触发降频，耗时不可预测。",
+      "tags": [
+        "crypto",
+        "security",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.argon2id.derive.password-empty",
+      "kind": "kdf.argon2id.derive",
+      "title": "密码为空 ⇒ 输入契约破坏",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "",
+        "saltHex": "706677616c6c657473616c7430313233",
+        "params": {
+          "m": 65536,
+          "t": 3,
+          "p": 1,
+          "saltLength": 16,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_HEADER_INVALID"
+      },
+      "notes": "空密码不是「密码错」，而是调用方没按契约传输入。用 headerInvalid（PFB_E_HEADER_INVALID）而非 authFailed，调用方才能把「输入非法」与「密码不对」分开提示。",
+      "tags": [
+        "crypto",
+        "contract",
+        "boundary"
+      ]
+    },
+    {
+      "id": "kdf.argon2id.derive.salt-length-mismatch",
+      "kind": "kdf.argon2id.derive",
+      "title": "盐长度与头声明的 saltLength 不符（头说 16、实际给 8）",
+      "milestone": "M1",
+      "input": {
+        "passwordUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+        "saltHex": "1011121314151617",
+        "params": {
+          "m": 65536,
+          "t": 3,
+          "p": 1,
+          "saltLength": 16,
+          "outputLength": 32
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_HEADER_INVALID"
+      },
+      "notes": "盐长度是文件头承诺的契约。调用方传的盐必须与之一致，否则属于调用错误而非密码错误。",
+      "tags": [
+        "crypto",
+        "contract",
+        "boundary"
+      ]
+    }
+  ]
+}

@@ -10,14 +10,14 @@
 
 M0（骨架与门禁）已完成并通过 CI，验收清单见 `docs/M0_ACCEPTANCE.md`。
 M1 按方案 §7.6 的顺序推进，当前落在**第一步：`pf_crypto` 原语层**。
-四个原语里已完成两个（顺序按「有没有独立期望值可用」排）：
+四个原语已全部落地（顺序按「有没有独立期望值可用」排）：
 
 | 原语 | 状态 | 期望值来源 |
 |---|---|---|
 | 摘要（SHA-256） | ✅ 已落地 | FIPS / NIST 公开向量 + Python `hashlib` 复算 |
 | HKDF-SHA256 | ✅ 已落地 | RFC 5869 附录 A + Python 标准库 / `cryptography` 双实现复算 |
 | AES-256-GCM | ✅ 已落地 | NIST GCMVS AES-256 Count=0 锚点 + Python `cryptography` / 可选 `pycryptodome` 双实现复算；实装走纯 Dart `package:cryptography`（见 §1.5 不用 libsodium 的理由） |
-| Argon2id | ⬜ 未开工 | 同上；且原生库（libsodium）的供给方案未定，见 §7.6 |
+| Argon2id | ✅ 已落地 | Python `argon2-cffi`（libargon2 绑定）独立复算 + RFC 9106 §5.3 锚点（Dart 单测）；实装走纯 Dart `DartArgon2id`（零原生依赖，不用 libsodium，见 §1.5） |
 
 容器编解码器、Keyring 实装、SQLCipher 打开流程仍在后面，尚未开工。
 

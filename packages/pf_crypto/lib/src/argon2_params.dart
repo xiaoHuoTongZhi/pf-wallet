@@ -34,15 +34,41 @@ final class Argon2Params {
     parallelism: 1,
   );
 
-  /// 桌面端默认：256 MiB / t=3 / p=4。
+  /// 桌面端默认：256 MiB / t=4 / p=4（= §3.2 的 P_STRONG）。
+  ///
+  /// t=4 而非 RFC「第二推荐」的 t=3：§3.2 的 P_STRONG 明确钉死 t=4 / p=4 ——
+  /// 这也是规格里否定 libsodium 预设（无法表达 t=4,p=4）的理由，代码必须一致。
   static const Argon2Params desktopDefault = Argon2Params(
     memoryKiB: 262144,
-    iterations: 3,
+    iterations: 4,
     parallelism: 4,
   );
 
   /// 导出文件默认：与移动端一致，保证低端设备也能在 1 秒内解开。
   static const Argon2Params exportDefault = mobileDefault;
+
+  // ---- §3.2 三档产品参数 ----
+  // 下面三个是「对外的产品决策」，上层（容器头、设置页）应当引用它们而非
+  // 直接写数字。与上面 mobile/desktop/export 的关系：
+  //   P_DEFAULT  = 移动端（导出也用它）
+  //   P_STRONG   = 桌面端
+  //   P_MIN      = 允许下限，低于它直接拒绝（见 validate）
+
+  /// §3.2 P_DEFAULT：默认档。64 MiB / t=3 / p=1，移动端与导出统一用它。
+  /// 低端设备也能在 1 秒内解开。
+  static const Argon2Params presetDefault = mobileDefault;
+
+  /// §3.2 P_STRONG：加强档。256 MiB / t=4 / p=4，桌面端等高内存设备使用。
+  static const Argon2Params presetStrong = desktopDefault;
+
+  /// §3.2 P_MIN：允许下限。19 MiB / t=2 / p=1（OWASP 对 Argon2id 的建议下限）。
+  /// 低于这一档的参数在 [validate] 里直接抛 [CryptoError.kdfParamsOutOfRange]，
+  /// 不允许进入派生。
+  static const Argon2Params presetMin = Argon2Params(
+    memoryKiB: minMemoryKiB,
+    iterations: minIterations,
+    parallelism: minParallelism,
+  );
 
   static const int defaultSaltLength = 16;
   static const int defaultOutputLength = 32;

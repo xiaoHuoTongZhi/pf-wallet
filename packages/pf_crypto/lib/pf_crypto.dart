@@ -10,7 +10,8 @@
 /// M1 交付（**原语层**，按 §7.6 的顺序推进）：
 ///   - [Digest] / [Sha256]：摘要原语（已落地）
 ///   - [KeyExpander] / [HkdfSha256]：密钥扩展原语（已落地）
-///   - AES-256-GCM、Argon2id：契约的实装
+///   - [Aes256Gcm]：AES-256-GCM 实装（已落地）
+///   - [Argon2idDeriver]：Argon2id 实装（已落地）
 ///   - **不含**容器编解码器（编排 KDF → AEAD → 摘要 → 原子写盘）
 ///     与 [Keyring] 实装（对接 flutter_secure_storage）—— 那是 M1 后续与 M2 的事
 ///
@@ -23,11 +24,12 @@
 ///                   extract 的公开入口，用它反而要自己调 HMAC）
 ///   - AES-256-GCM → `package:cryptography`（纯 Dart，6 端行为一致；`package:crypto`
 ///                   不含任何分组密码，所以在这一步引入它无可替代）
-///   - Argon2id    → `package:sodium`（libsodium FFI）
+///   - Argon2id    → `package:cryptography` 里的 `DartArgon2id`（纯 Dart，RFC 9106）
 ///
-/// 注：M0 的注释曾写「AES-256-GCM 走 libsodium 的 `crypto_aead_aes256gcm` 或平台 crypto」，
-/// 与 §1.5 的 `cryptography` 不一致。以 §1.5 为准 —— 纯 Dart 实现能进 CI
-/// （libsodium 走 FFI，需要在每个 runner 上额外准备原生库，见 §7.6 的顺序说明）。
+/// 注：M0 的注释曾写「Argon2id 走 libsodium / sodium」，与 §1.5 的纯 Dart 优先
+/// 不一致。已改为 `DartArgon2id` —— sodium 是 Flutter 插件、需原生二进制与
+/// `SodiumInit.init()`，无法在纯 Dart 的 `dart test` CI 上跑，也违背 §1.5。
+/// 若某平台不可用，Plan B 是同样纯 Dart 的 `hashlib`（无原生依赖）。
 ///
 /// ## 为什么先做格式、后做算法
 ///
@@ -38,6 +40,7 @@ library;
 export 'src/aead.dart';
 export 'src/aesgcm.dart';
 export 'src/argon2_params.dart';
+export 'src/argon2id.dart';
 export 'src/byte_order.dart';
 export 'src/container_format.dart';
 export 'src/digest.dart';

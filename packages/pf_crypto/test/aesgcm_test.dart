@@ -74,7 +74,11 @@ void main() {
     test('instance 是 const 单例，无状态', () {
       expect(identical(Aes256Gcm.instance, Aes256Gcm.instance), isTrue);
       // 默认构造子也返回同一单例：验证「构造」与「instance」是同一个对象。
-      expect(identical(Aes256Gcm(), Aes256Gcm.instance), isTrue);
+      // 用 const 构造验证「规范化为同一对象」：非 const 的 Aes256Gcm() 每次都是
+      // 新实例，identical 必然为 false。这里刻意写出 const，若换成
+      // Aes256Gcm.instance 就退化成同义反复，测不到 const 规范化。
+      // ignore: use_named_constants
+      expect(identical(const Aes256Gcm(), Aes256Gcm.instance), isTrue);
     });
   });
 
@@ -328,12 +332,7 @@ void main() {
   group('Aes256Gcm · 错误分支 · 标签长度', () {
     test('tag 不是 16 字节 ⇒ headerInvalid（在解密前就拦下）', () {
       // 标签长度错了，根本没有「凑出合法标签」的可能，属于输入契约破坏。
-      for (final badTag in <String>[
-        '',
-        '5d86',
-        '5d8629be177ace8460f9d0d3cd00d9',
-        '00' * 17,
-      ]) {
+      for (final badTag in <String>['', '5d86', '5d8629be177ace8460f9d0d3cd00d9', '00' * 17]) {
         expect(
           () => _aes.open(
             key: fromHex(_key),
