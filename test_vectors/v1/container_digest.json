@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "suite": "container_digest",
+  "title": "PFB 内容摘要（免密完整性）",
+  "description": "contentDigest = SHA256(文件[48..长度-32])：覆盖盐起到密文区末尾；固定头的完整性由 headerCrc32 负责。覆盖边界本身是契约。",
+  "cases": [
+    {
+      "id": "container.digest.verify.ok",
+      "kind": "container.digest.verify",
+      "title": "未改动文件：contentDigest 一致",
+      "milestone": "M1",
+      "input": {
+        "hex": "5046424f4f4b0100000100010005010100004c000000000201200010000800010000000000000035000000010f01b8f6101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a700000000000102030405060700010001000000000000000000000000000000000000000000000000000000000000000000000045a0a1a2a3a4a5a6a70000000004d23a3df8d0f0174eb7a6762619d13a15e4c86ac033e50e84e4484f7b74a40795a1434f245f699d2ffa7e6a8f5dea67a4309f7c10f91ab1a3c12960fc05972f17daa93d6769cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa100"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "matches": true,
+          "computedDigestHex": "69cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa100",
+          "declaredDigestHex": "69cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa100"
+        }
+      },
+      "notes": "免密完整性的正向基线：损坏判定先于密码校验 —— 用户还没输密码就知道文件坏了，而不是输完密码才被告知「打不开」。",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "id": "container.digest.verify.ciphertext-tampered",
+      "kind": "container.digest.verify",
+      "title": "密文区改一字节 → 摘要不符（文件损坏，无需密码即判定）",
+      "milestone": "M1",
+      "input": {
+        "hex": "5046424f4f4b0100000100010005010100004c000000000201200010000800010000000000000035000000010f01b8f6101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a700000000000102030405060700010001000000000000000000000000000000000000000000000000000000000000000000000045a0a1a2a3a4a5a6a70000000004d23a3df8d0f0174eb7a6762619d13a15e4c86ac033e50e84e4484f7b74a40795a1434f245f699d2ffa7e6a8f5dea67a4309f7c10f91ab1a2c12960fc05972f17daa93d6769cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa100"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "matches": false,
+          "computedDigestHex": "51f9b4b1aacd95f38a2e90214ed237decfab13efebf21c13980503b01e6ca0fc",
+          "declaredDigestHex": "69cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa100"
+        }
+      },
+      "notes": "这是「损坏」与「密码错」能区分的全部依据：摘要对密文计算，不泄漏明文信息，却能在拿密码之前拦住损坏的文件。",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "id": "container.digest.verify.header-tampered-outside-coverage",
+      "kind": "container.digest.verify",
+      "title": "固定头改一字节 → 摘要仍相符（固定头是 CRC 的辖区）",
+      "milestone": "M1",
+      "input": {
+        "hex": "5046424f4f4b0100000101010005010100004c000000000201200010000800010000000000000035000000010f01b8f6101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a700000000000102030405060700010001000000000000000000000000000000000000000000000000000000000000000000000045a0a1a2a3a4a5a6a70000000004d23a3df8d0f0174eb7a6762619d13a15e4c86ac033e50e84e4484f7b74a40795a1434f245f699d2ffa7e6a8f5dea67a4309f7c10f91ab1a3c12960fc05972f17daa93d6769cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa100"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "matches": true,
+          "computedDigestHex": "69cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa100",
+          "declaredDigestHex": "69cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa100"
+        }
+      },
+      "notes": "覆盖边界本身是契约：contentDigest 覆盖 [48..长度-32)，固定头由 headerCrc32 负责。两者的分工被这条向量显式钉死 —— 若有人把摘要改成覆盖整文件或漏掉变量区，这里会立刻变红。",
+      "tags": [
+        "security",
+        "format"
+      ]
+    },
+    {
+      "id": "container.digest.verify.trailer-tampered",
+      "kind": "container.digest.verify",
+      "title": "文件尾声明值被改 → 不符，计算值不变",
+      "milestone": "M1",
+      "input": {
+        "hex": "5046424f4f4b0100000100010005010100004c000000000201200010000800010000000000000035000000010f01b8f6101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a700000000000102030405060700010001000000000000000000000000000000000000000000000000000000000000000000000045a0a1a2a3a4a5a6a70000000004d23a3df8d0f0174eb7a6762619d13a15e4c86ac033e50e84e4484f7b74a40795a1434f245f699d2ffa7e6a8f5dea67a4309f7c10f91ab1a3c12960fc05972f17daa93d6769cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa101"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "matches": false,
+          "computedDigestHex": "69cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa100",
+          "declaredDigestHex": "69cc566542ed1425e4f416ad01798399634ab8d53d63d38775eb2c7645aaa101"
+        }
+      },
+      "notes": "两个值都要比对：只断言布尔值的话，「无论如何都返回 false」的实现能让全部反例通过。",
+      "tags": [
+        "security"
+      ]
+    }
+  ]
+}

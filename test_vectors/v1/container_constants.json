@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "suite": "container_constants",
+  "title": "PFB 容器格式发布常量（§3.3）",
+  "description": "魔数、头部布局偏移、长度约束、featureFlags 位、算法 ID 的全部发布常量。期望值为规格 §3.3 的人工转录。",
+  "cases": [
+    {
+      "id": "container.format.constants.v1",
+      "kind": "container.format.constants",
+      "title": "§3.3 容器格式全部发布常量",
+      "milestone": "M1",
+      "input": {},
+      "expect": {
+        "ok": true,
+        "value": {
+          "magicHex": "5046424f4f4b0100",
+          "headerSize": 128,
+          "fixedHeaderSize": 48,
+          "trailerSize": 32,
+          "payloadOffset": 128,
+          "formatVersion": 1,
+          "minReaderVersion": 1,
+          "saltLength": 16,
+          "noncePrefixLength": 8,
+          "nonceLength": 12,
+          "tagLength": 16,
+          "volumeSetIdLength": 8,
+          "setDigestLength": 32,
+          "trailerDigestLength": 32,
+          "defaultChunkPlainSizeKiB": 1024,
+          "maxVolumes": 64,
+          "maxPlaintextLength": 1099511627776,
+          "bitAesGcm": 1,
+          "bitGzip": 2,
+          "bitChunked": 4,
+          "bitHasAttachments": 8,
+          "bitMultiVolume": 16,
+          "bitIncremental": 32,
+          "knownFlagsMask": 63,
+          "kdfArgon2id": 1,
+          "aeadAes256Gcm": 1
+        }
+      },
+      "notes": "格式常量一旦发布就不可更改：这份快照是「不可更改」的机器判据 —— 任何常量漂移都会让用户已导出的备份失去可读性，且静默发生。",
+      "tags": [
+        "format",
+        "security"
+      ]
+    }
+  ]
+}

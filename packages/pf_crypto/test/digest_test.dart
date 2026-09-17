@@ -19,26 +19,6 @@ const String _sha256Abc = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410f
 const String _sha256Nist448Bit = '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1';
 const String _sha256MillionA = 'cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0';
 
-/// 向量 `container.digest.verify.*` 的原始输入与期望值。
-///
-/// 直接抄自 `test_vectors/v1/container_trailer.json`。在这里复刻一份是刻意的：
-/// 那三条向量由 `pf_testkit` 的驱动执行，而本文件要证明的是
-/// 「pf_crypto 自己的实现也能算出同样的值」—— 两者是独立的证据链。
-const String _vectorTrailerHex =
-    '00010000630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd50464246';
-const String _vectorCiphertextHex =
-    '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
-const String _vectorComputedHex =
-    '630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd';
-const String _vectorTamperedCiphertextHex =
-    '000102030405067f08090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
-const String _vectorTamperedComputedHex =
-    '8ae18d67693672a956a6652470fa17125c167d2763072565f5c782e8fe3a8885';
-const String _vectorZeroDigestHex =
-    '0000000000000000000000000000000000000000000000000000000000000000';
-const String _vectorZeroDigestTrailerHex =
-    '00010000000000000000000000000000000000000000000000000000000000000000000050464246';
-
 void main() {
   group('Sha256 · 常量', () {
     test('算法名与长度锁死', () {
@@ -99,50 +79,48 @@ void main() {
     });
   });
 
-  group('PfbDigest.verify · 复用向量 container.digest.verify', () {
-    test('密文与文件尾摘要一致 → matches', () {
-      final trailer = PfbTrailer.decode(fromHex(_vectorTrailerHex));
-      final verdict = PfbDigest.verify(trailer: trailer, ciphertext: fromHex(_vectorCiphertextHex));
+  group('PfbContainer.verifyContentDigest · 免密完整性（§3.3）', () {
+    // 覆盖范围由向量套件 container_digest（Python 独立实现生成）锁字节；
+    // 这里守行为边界：覆盖从盐到密文区末尾，固定头由 CRC 负责。
+    Future<Uint8List> buildFile() => PfbContainer.seal(
+      payload: Uint8List.fromList(List.generate(64, (i) => i)),
+      key: Uint8List.fromList(List.generate(32, (i) => i + 1)),
+      salt: Uint8List.fromList(List.generate(16, (i) => 0x10 + i)),
+      noncePrefix: Uint8List.fromList(List.generate(8, (i) => 0xA0 + i)),
+      kdf: Argon2Params.presetMin,
+    );
+
+    test('未改动 → matches，且声明值就是文件尾 32 字节', () async {
+      final file = await buildFile();
+      final verdict = PfbContainer.verifyContentDigest(file);
       expect(verdict.matches, isTrue);
-      expect(verdict.computedHex, _vectorComputedHex);
-      expect(verdict.declaredHex, _vectorComputedHex);
+      expect(verdict.declaredHex, toHex(file.sublist(file.length - 32)));
+      expect(verdict.computedHex, verdict.declaredHex);
     });
 
-    test('密文被改动一个字节 → 摘要不符，且算出的摘要与向量逐字节相同', () {
-      final trailer = PfbTrailer.decode(fromHex(_vectorTrailerHex));
-      final verdict = PfbDigest.verify(
-        trailer: trailer,
-        ciphertext: fromHex(_vectorTamperedCiphertextHex),
-      );
+    test('密文区改一字节 → 摘要不符', () async {
+      final file = await buildFile();
+      final before = PfbContainer.verifyContentDigest(file).computedHex;
+      file[200] ^= 0x01;
+      final verdict = PfbContainer.verifyContentDigest(file);
       expect(verdict.matches, isFalse);
-      expect(verdict.computedHex, _vectorTamperedComputedHex);
-      expect(verdict.declaredHex, _vectorComputedHex);
+      expect(verdict.computedHex, isNot(before));
     });
 
-    test('文件尾记录的摘要被改 → 摘要不符，算出的仍是对密文的摘要', () {
-      final trailer = PfbTrailer.decode(fromHex(_vectorZeroDigestTrailerHex));
-      final verdict = PfbDigest.verify(trailer: trailer, ciphertext: fromHex(_vectorCiphertextHex));
+    test('固定头改一字节 → 摘要仍相符（那不是它的辖区，CRC 的才是）', () async {
+      final file = await buildFile();
+      file[10] ^= 0x01; // minReaderVersion，位于 0..48，不在 contentDigest 覆盖内
+      final verdict = PfbContainer.verifyContentDigest(file);
+      expect(verdict.matches, isTrue);
+    });
+
+    test('文件尾声明值被改 → 不符，计算值不变', () async {
+      final file = await buildFile();
+      final computed = PfbContainer.verifyContentDigest(file).computedHex;
+      file[file.length - 1] ^= 0x01;
+      final verdict = PfbContainer.verifyContentDigest(file);
       expect(verdict.matches, isFalse);
-      expect(verdict.computedHex, _vectorComputedHex);
-      expect(verdict.declaredHex, _vectorZeroDigestHex);
-    });
-
-    test('核对结果里的两个缓冲区是副本，改写它们不会动到文件尾', () {
-      final trailer = PfbTrailer.decode(fromHex(_vectorTrailerHex));
-      final declaredBefore = toHex(trailer.digest);
-      final verdict = PfbDigest.verify(trailer: trailer, ciphertext: fromHex(_vectorCiphertextHex));
-      zeroize(verdict.computed);
-      zeroize(verdict.declared);
-      expect(toHex(trailer.digest), declaredBefore);
-    });
-
-    test('长度不同时判为不符（不抛异常，也不误判为相符）', () {
-      final trailer = PfbTrailer.decode(fromHex(_vectorTrailerHex));
-      final verdict = PfbDigest.verify(
-        trailer: trailer,
-        ciphertext: fromHex(_vectorCiphertextHex).sublist(1),
-      );
-      expect(verdict.matches, isFalse);
+      expect(verdict.computedHex, computed);
     });
   });
 }

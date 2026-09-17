@@ -4,7 +4,6 @@
 ///
 /// M0 已交付（纯字节运算，不含任何算法）：
 ///   - [Argon2Params]：参数模型、范围约束、JSON 往返
-///   - [PfbFormat] / [PfbHeader] / [PfbTrailer] / [PfbLayout]：容器二进制格式
 ///   - [KeyDeriver] / [Aead] / [Keyring] / [KeyringStore]：契约
 ///
 /// M1 交付（**原语层**，按 §7.6 的顺序推进）：
@@ -16,6 +15,13 @@
 ///     恢复码包裹（已落地，纯函数组合，全部规则被向量锁死）
 ///   - **不含**有状态的 [Keyring] 实装（初始化 / 解锁 / 失败计数 /
 ///     对接 flutter_secure_storage）—— 那是 M2 的事
+///
+/// ## 容器格式的 2026-09-17 裁决
+///
+/// M0 曾落地 76 字节 "PFB1" 单块容器并被当时的向量锁死；落实导出器时确认
+/// 与规格 §3.3（128 字节分块容器：noncePrefix + 链式 AAD + contentDigest）
+/// 冲突，裁决 **§3.3 为唯一 v1**，76 字节版废除、向量重写。
+/// 该格式从未发布过任何文件，无迁移问题。记录见 [PfbHeader] 文件注释。
 ///
 /// ## 算法从哪来
 ///
@@ -45,6 +51,7 @@ export 'src/argon2_params.dart';
 export 'src/argon2id.dart';
 export 'src/byte_order.dart';
 export 'src/container_format.dart';
+export 'src/crc32.dart';
 export 'src/digest.dart';
 export 'src/hkdf.dart';
 export 'src/kdf.dart';

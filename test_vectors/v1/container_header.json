@@ -1,385 +1,194 @@
 {
   "schemaVersion": 1,
   "suite": "container_header",
-  "title": "PFB 容器文件头",
-  "description": "锁定 76 字节文件头的字节布局、魔数、算法 ID 与全部取值约束。文件头是明文的 —— 这不是泄漏，而是「用文件自己的参数派生密钥」的前提。真正保护数据的是密码熵与 KDF 的代价。",
+  "title": "PFB 分块容器文件头（§3.3，2026-09-17 裁决的唯一 v1）",
+  "description": "锁定 128 字节头部的字节布局（48 固定 + 变量区）、CRC32、featureFlags 位语义与四类错误分流。期望值由 Python 独立实现生成。",
   "cases": [
     {
-      "id": "container.header.encode.mobile-default",
+      "id": "container.header.encode.default-full",
       "kind": "container.header.encode",
-      "title": "移动端默认参数下的文件头字节",
-      "milestone": "M0",
+      "title": "默认参数与 GZIP+CHUNKED 标志下的 128 字节头部字节",
+      "milestone": "M1",
       "input": {
-        "params": {
+        "kdf": {
           "m": 65536,
           "t": 3,
           "p": 1,
           "saltLength": 16,
           "outputLength": 32
         },
-        "plaintextLength": 32,
-        "exportedAtMilliseconds": 1735689600000,
-        "deviceIdHex": "000102030405060708090a0b0c0d0e0f"
+        "featureFlags": 7,
+        "minReaderVersion": 1,
+        "chunkPlainSizeKiB": 1024,
+        "plaintextLength": 251658240,
+        "chunkCount": 240,
+        "saltHex": "101112131415161718191a1b1c1d1e1f",
+        "noncePrefixHex": "a0a1a2a3a4a5a6a7",
+        "volumeSetIdHex": "0001020304050607",
+        "volumeIndex": 1,
+        "volumeTotal": 1,
+        "setDigestHex": "0000000000000000000000000000000000000000000000000000000000000000"
       },
       "expect": {
         "ok": true,
         "value": {
-          "hex": "504642310001000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f00000000000000000000000000000000",
-          "lengthBytes": 76,
-          "majorVersion": 1,
-          "minorVersion": 0,
-          "kdfDescription": "m=64MiB t=3 p=1"
+          "hex": "5046424f4f4b0100000100010007010100010000000000030120001000080400000000000f000000000000f0e69e9c84101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a7000000000001020304050607000100010000000000000000000000000000000000000000000000000000000000000000",
+          "lengthBytes": 128,
+          "crc32Hex": "E69E9C84",
+          "headerSha256Hex": "ef942f75956254d8b1c10f77bb48d98e5dd03094dfeb08ae62ba86ffadf0d40d"
         }
       },
-      "notes": "这是本格式的第一个发布字节序快照。任何让这串十六进制变化的改动，都会让已导出的旧文件失去可读性，因此必须走格式主版本升级，而不是直接改。",
+      "notes": "这是发布格式的第一个字节序快照。任何让这串十六进制变化的改动都会让已导出的旧文件失去可读性，必须走格式主版本升级，而不是直接改。",
       "tags": [
         "format",
         "security"
       ]
     },
     {
-      "id": "container.header.encode.desktop-default",
+      "id": "container.header.encode.attachments-incremental-multivolume",
       "kind": "container.header.encode",
-      "title": "桌面端默认参数（256 MiB / p=4）下的文件头字节",
-      "milestone": "M0",
+      "title": "HAS_ATTACH + INCREMENTAL + 多卷（2/3）与非零 setDigest 的头部",
+      "milestone": "M1",
       "input": {
-        "params": {
-          "m": 262144,
-          "t": 4,
-          "p": 4,
-          "saltLength": 16,
-          "outputLength": 32
-        },
-        "plaintextLength": 0,
-        "exportedAtMilliseconds": 1735689600000,
-        "deviceIdHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      },
-      "expect": {
-        "ok": true,
-        "value": {
-          "hex": "504642310001000000010001000400000000000400040010000c00100000000000000000000001941f297c00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000000000000000000000000000000",
-          "lengthBytes": 76,
-          "majorVersion": 1,
-          "minorVersion": 0,
-          "kdfDescription": "m=256MiB t=4 p=4"
-        }
-      },
-      "notes": "锁定「实际使用的参数必须写进文件头」这条规则。桌面端用 256 MiB 导出、手机端用 64 MiB 打开，全靠文件头里的实际值，而不是靠读方自己的默认值。",
-      "tags": [
-        "format",
-        "cross-platform"
-      ]
-    },
-    {
-      "id": "container.header.encode.empty-payload-minimal-time",
-      "kind": "container.header.encode",
-      "title": "空载荷 + 最早合法导出时刻 + 32 字节盐",
-      "milestone": "M0",
-      "input": {
-        "params": {
-          "m": 65536,
-          "t": 3,
-          "p": 1,
-          "saltLength": 32,
-          "outputLength": 32
-        },
-        "plaintextLength": 0,
-        "exportedAtMilliseconds": 1,
-        "deviceIdHex": "00000000000000000000000000000000"
-      },
-      "expect": {
-        "ok": true,
-        "value": {
-          "hex": "504642310001000000010001000100000000000300010020000c0010000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
-          "lengthBytes": 76,
-          "majorVersion": 1,
-          "minorVersion": 0,
-          "kdfDescription": "m=64MiB t=3 p=1"
-        }
-      },
-      "notes": "边界：明文字节数为 0 且导出时刻取下界（1）。零值导出时刻是被拒绝的。",
-      "tags": [
-        "format",
-        "boundary"
-      ]
-    },
-    {
-      "id": "container.header.encode.max-plaintext",
-      "kind": "container.header.encode",
-      "title": "明文长度取 1 TiB 上限",
-      "milestone": "M0",
-      "input": {
-        "params": {
+        "kdf": {
           "m": 65536,
           "t": 3,
           "p": 1,
           "saltLength": 16,
           "outputLength": 32
         },
-        "plaintextLength": 1099511627776,
-        "exportedAtMilliseconds": 4102444800000,
-        "deviceIdHex": "ffffffffffffffffffffffffffffffff"
+        "featureFlags": 61,
+        "minReaderVersion": 1,
+        "chunkPlainSizeKiB": 1024,
+        "plaintextLength": 0,
+        "chunkCount": 0,
+        "saltHex": "101112131415161718191a1b1c1d1e1f",
+        "noncePrefixHex": "a0a1a2a3a4a5a6a7",
+        "volumeSetIdHex": "0001020304050607",
+        "volumeIndex": 2,
+        "volumeTotal": 3,
+        "setDigestHex": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f"
       },
       "expect": {
         "ok": true,
         "value": {
-          "hex": "504642310001000000010001000100000000000300010010000c00100000010000000000000003bb2cc3d800ffffffffffffffffffffffffffffffff00000000000000000000000000000000",
-          "lengthBytes": 76,
-          "majorVersion": 1,
-          "minorVersion": 0,
-          "kdfDescription": "m=64MiB t=3 p=1"
+          "hex": "5046424f4f4b010000010001003d01010001000000000003012000100008040000000000000000000000000001017a6f101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a7000000000001020304050607000200039f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f",
+          "lengthBytes": 128,
+          "crc32Hex": "01017A6F",
+          "headerSha256Hex": "8c820b5fd4f0ce1c9306cbcf1d007017207f6cefda2b0945ea783cbede3bfbee"
         }
       },
-      "notes": "1 TiB 是明文长度的上界，不是功能限制，而是一道防 DoS 的闸门：u64 字段能声明 16 EiB，读方若照此分配内存就是一次自伤。",
+      "notes": "变长区的 setDigest 参与 AAD 基础摘要（SHA256 头 128 字节）——这条向量把「变量区也在 AAD 保护范围内」钉死。",
       "tags": [
         "format",
-        "boundary",
         "security"
       ]
     },
     {
-      "id": "container.header.decode.mobile-default",
+      "id": "container.header.decode.roundtrip",
       "kind": "container.header.decode",
-      "title": "解析移动端默认文件头",
-      "milestone": "M0",
+      "title": "解析合法头部并还原全部字段",
+      "milestone": "M1",
       "input": {
-        "hex": "504642310001000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
+        "hex": "5046424f4f4b0100000100010007010100010000000000030120001000080400000000000f000000000000f0e69e9c84101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a7000000000001020304050607000100010000000000000000000000000000000000000000000000000000000000000000"
       },
       "expect": {
         "ok": true,
         "value": {
-          "majorVersion": 1,
-          "minorVersion": 0,
-          "kdfAlgorithm": 1,
-          "aeadAlgorithm": 1,
+          "formatVersion": 1,
+          "minReaderVersion": 1,
+          "featureFlags": 7,
           "kdfMemoryKiB": 65536,
           "kdfIterations": 3,
           "kdfParallelism": 1,
-          "saltLength": 16,
-          "nonceLength": 12,
-          "tagLength": 16,
-          "plaintextLength": 32,
-          "exportedAtMilliseconds": 1735689600000,
-          "deviceIdHex": "000102030405060708090a0b0c0d0e0f",
-          "kdfDescription": "m=64MiB t=3 p=1"
+          "kdfSaltLen": 16,
+          "noncePrefixLen": 8,
+          "chunkPlainSizeKiB": 1024,
+          "plaintextLength": 251658240,
+          "chunkCount": 240,
+          "saltHex": "101112131415161718191a1b1c1d1e1f",
+          "noncePrefixHex": "a0a1a2a3a4a5a6a7",
+          "volumeSetIdHex": "0001020304050607",
+          "volumeIndex": 1,
+          "volumeTotal": 1,
+          "setDigestHex": "0000000000000000000000000000000000000000000000000000000000000000"
         }
-      }
+      },
+      "notes": "解析必须逐字段还原；宽松解析会让拼写错误变成假绿灯。",
+      "tags": [
+        "format"
+      ]
     },
     {
-      "id": "container.header.decode.magic-mismatch",
+      "id": "container.header.decode.crc-tampered",
       "kind": "container.header.decode",
-      "title": "魔数不是 PFB1",
-      "milestone": "M0",
+      "title": "头部一个字节被改且未重算 CRC → 结构损坏",
+      "milestone": "M1",
       "input": {
-        "hex": "584642310001000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
+        "hex": "5046424f4f4b0100000101010007010100010000000000030120001000080400000000000f000000000000f0e69e9c84101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a7000000000001020304050607000100010000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_HEADER_INVALID"
+      },
+      "notes": "CRC 先于字段语义校验。没有这一层，被篡改的头部可能被解释成「合法但奇怪的文件」，为后续攻击铺路。",
+      "tags": [
+        "security",
+        "format"
+      ]
+    },
+    {
+      "id": "container.header.decode.magic-wrong",
+      "kind": "container.header.decode",
+      "title": "魔数不符 → 不是本格式",
+      "milestone": "M1",
+      "input": {
+        "hex": "504642304f4b0100000100010007010100010000000000030120001000080400000000000f000000000000f0e69e9c84101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a7000000000001020304050607000100010000000000000000000000000000000000000000000000000000000000000000"
       },
       "expect": {
         "ok": false,
         "errorCode": "PFB_E_MAGIC"
       },
-      "notes": "用户选错了文件时必须立刻说清「这不是备份文件」，而不是报解密失败。"
+      "notes": "选错文件的第一道分流；必须在读任何参数之前拒绝。",
+      "tags": [
+        "security",
+        "format"
+      ]
     },
     {
-      "id": "container.header.decode.version-unsupported",
+      "id": "container.header.decode.version-too-new",
       "kind": "container.header.decode",
-      "title": "格式主版本高于本实现",
-      "milestone": "M0",
+      "title": "formatVersion=2（CRC 正确）→ 版本不兼容",
+      "milestone": "M1",
       "input": {
-        "hex": "504642310002000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
+        "hex": "5046424f4f4b0100000200010007010100010000000000030120001000080400000000000f000000000000f06d4da29d101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a7000000000001020304050607000100010000000000000000000000000000000000000000000000000000000000000000"
       },
       "expect": {
         "ok": false,
         "errorCode": "PFB_E_VERSION_UNSUPPORTED"
       },
-      "notes": "主版本更高时必须拒绝，而不是尽力解析。主版本的定义就是「次版本无法表达的不兼容变更」，强行解析会得到一堆看起来合法、实际错位的字段。",
+      "notes": "CRC 修好之后版本分支才轮得到 —— 这条向量确认两个分支互不遮蔽。",
       "tags": [
-        "format",
-        "forward-compat"
-      ]
-    },
-    {
-      "id": "container.header.decode.reserved-not-zero",
-      "kind": "container.header.decode",
-      "title": "保留位非零",
-      "milestone": "M0",
-      "input": {
-        "hex": "504642310001000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f01000000000000000000000000000000"
-      },
-      "expect": {
-        "ok": false,
-        "errorCode": "PFB_E_HEADER_INVALID"
-      },
-      "notes": "保留位非零意味着「写出这个文件的实现用到了本实现不认识的语义」。本实现可能有部分能力，因此拒绝主版本升级（那样太武断），但必须拒绝解析。",
-      "tags": [
-        "format",
-        "forward-compat"
-      ]
-    },
-    {
-      "id": "container.header.decode.truncated",
-      "kind": "container.header.decode",
-      "title": "文件头不足 76 字节",
-      "milestone": "M0",
-      "input": {
-        "hex": "504642310001000000010001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f000000000000000000000000000000"
-      },
-      "expect": {
-        "ok": false,
-        "errorCode": "PFB_E_TRUNCATED"
-      }
-    },
-    {
-      "id": "container.header.decode.unknown-kdf-algorithm",
-      "kind": "container.header.decode",
-      "title": "KDF 算法 ID 未知",
-      "milestone": "M0",
-      "input": {
-        "hex": "504642310001000000020001000100000000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
-      },
-      "expect": {
-        "ok": false,
-        "errorCode": "PFB_E_HEADER_INVALID"
-      },
-      "notes": "算法 ID 是契约：只能追加新 ID，不得复用旧 ID。遇到不认识的必须报错而不是猜。",
-      "tags": [
-        "format",
-        "crypto"
-      ]
-    },
-    {
-      "id": "container.header.decode.bad-nonce-length",
-      "kind": "container.header.decode",
-      "title": "nonce 长度不是 12",
-      "milestone": "M0",
-      "input": {
-        "hex": "504642310001000000010001000100000000000300010010001000100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
-      },
-      "expect": {
-        "ok": false,
-        "errorCode": "PFB_E_HEADER_INVALID"
-      },
-      "notes": "AES-256-GCM 的 96 位 nonce 是唯一被广泛支持且无需额外派生步骤的长度，固定为 12。",
-      "tags": [
-        "format",
-        "crypto"
-      ]
-    },
-    {
-      "id": "container.header.decode.kdf-memory-too-large",
-      "kind": "container.header.decode",
-      "title": "KDF 内存参数超过 1 GiB 上限",
-      "milestone": "M0",
-      "input": {
-        "hex": "504642310001000000010001001000010000000300010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
-      },
-      "expect": {
-        "ok": false,
-        "errorCode": "PFB_E_KDF_PARAMS"
-      },
-      "notes": "**这是最重要的一条安全向量。**KDF 参数来自文件头，也就是攻击者可控。一个把 m 写成 16 GiB 的文件，会让受害设备在打开它的瞬间 OOM。上限必须在解析文件头时就卡死，而不是等到真正派生时。",
-      "tags": [
-        "security",
-        "boundary"
-      ]
-    },
-    {
-      "id": "container.header.decode.kdf-iterations-too-low",
-      "kind": "container.header.decode",
-      "title": "KDF 迭代次数低于下限（t=1）",
-      "milestone": "M0",
-      "input": {
-        "hex": "504642310001000000010001000100000000000100010010000c00100000000000000020000001941f297c00000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
-      },
-      "expect": {
-        "ok": false,
-        "errorCode": "PFB_E_KDF_PARAMS"
-      },
-      "notes": "下限同样是安全参数。允许读入一个 t=1 的文件，等于允许别人用一份「便宜的」备份诱导本机接受弱参数，从而让爆破成本下降三个数量级。",
-      "tags": [
-        "security",
-        "boundary"
-      ]
-    },
-    {
-      "id": "container.header.decode.plaintext-length-too-large",
-      "kind": "container.header.decode",
-      "title": "明文长度超过 1 TiB 上限",
-      "milestone": "M0",
-      "input": {
-        "hex": "504642310001000000010001000100000000000300010010000c00100000010000000001000001941f297c00000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
-      },
-      "expect": {
-        "ok": false,
-        "errorCode": "PFB_E_HEADER_INVALID"
-      },
-      "notes": "上界存在的唯一理由是让「头部声明的长度」不能驱动一次荒谬的分配。缺失这道闸门时，攻击者只需改 8 个字节就能让受害设备在打开文件的瞬间耗尽内存。",
-      "tags": [
-        "security",
-        "boundary"
-      ]
-    },
-    {
-      "id": "container.header.decode.exported-at-zero",
-      "kind": "container.header.decode",
-      "title": "导出时刻为 0",
-      "milestone": "M0",
-      "input": {
-        "hex": "504642310001000000010001000100000000000300010010000c001000000000000000200000000000000000000102030405060708090a0b0c0d0e0f00000000000000000000000000000000"
-      },
-      "expect": {
-        "ok": false,
-        "errorCode": "PFB_E_HEADER_INVALID"
-      },
-      "notes": "0 不是合法时刻，而是「字段没被写过」的痕迹。这类值应当暴露而不是放行。"
-    },
-    {
-      "id": "container.format.constants.locked",
-      "kind": "container.format.constants",
-      "title": "容器格式全部常量",
-      "milestone": "M0",
-      "input": {},
-      "expect": {
-        "ok": true,
-        "value": {
-          "magicHex": "50464231",
-          "trailerMagicHex": "50464246",
-          "headerSize": 76,
-          "trailerSize": 40,
-          "deviceIdLength": 16,
-          "reservedLength": 16,
-          "expectedNonceLength": 12,
-          "expectedTagLength": 16,
-          "majorVersion": 1,
-          "minorVersion": 0,
-          "maxPlaintextLength": 1099511627776,
-          "kdfArgon2id": 1,
-          "aeadAes256Gcm": 1,
-          "digestSha256": 1,
-          "offsetMagic": 0,
-          "offsetMajorVersion": 4,
-          "offsetMinorVersion": 6,
-          "offsetKdfAlgorithm": 8,
-          "offsetAeadAlgorithm": 10,
-          "offsetKdfMemoryKiB": 12,
-          "offsetKdfIterations": 16,
-          "offsetKdfParallelism": 20,
-          "offsetSaltLength": 22,
-          "offsetNonceLength": 24,
-          "offsetTagLength": 26,
-          "offsetPlaintextLength": 28,
-          "offsetExportedAt": 36,
-          "offsetDeviceId": 44,
-          "offsetReserved": 60,
-          "offsetTrailerDigestAlgorithm": 0,
-          "offsetTrailerReserved": 2,
-          "offsetTrailerDigest": 4,
-          "offsetTrailerMagic": 36,
-          "trailerDigestLength": 32
-        }
-      },
-      "notes": "把全部偏移与长度一次锁定。逐条写成 encode/decode 向量会让文件变得很长，而偏移量的错误几乎总是「改一个就错一片」，所以集中成一条更容易在 review 时被看清。",
-      "tags": [
+        "forward-compat",
         "format"
+      ]
+    },
+    {
+      "id": "container.header.decode.unknown-flag-bit",
+      "kind": "container.header.decode",
+      "title": "未知 flag 位（bit11，CRC 正确）→ 拒绝解析",
+      "milestone": "M1",
+      "input": {
+        "hex": "5046424f4f4b0100000100010807010100010000000000030120001000080400000000000f000000000000f0058aa8d0101112131415161718191a1b1c1d1e1fa0a1a2a3a4a5a6a7a0a1a2a3a4a5a6a7000000000001020304050607000100010000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFB_E_HEADER_INVALID"
+      },
+      "notes": "未知位意味着「来自更新的次版本」。本实现无法安全解释它，静默忽略会把未知语义当成已知语义。",
+      "tags": [
+        "forward-compat",
+        "security"
       ]
     }
   ]
