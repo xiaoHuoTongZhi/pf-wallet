@@ -19,10 +19,12 @@ M1 按方案 §7.6 的顺序推进。四个原语 + §3.1 密钥层级编排已�
 | AES-256-GCM | ✅ 已落地 | NIST GCMVS AES-256 Count=0 锚点 + Python `cryptography` / 可选 `pycryptodome` 双实现复算；实装走纯 Dart `package:cryptography`（见 §1.5 不用 libsodium 的理由） |
 | Argon2id | ✅ 已落地 | Python `argon2-cffi`（libargon2 绑定）独立复算 + RFC 9106 §5.3 锚点（Dart 单测）；实装走纯 Dart `DartArgon2id`（零原生依赖，不用 libsodium，见 §1.5） |
 | Keyring 编排（§3.1：MK → DBKey → keyCheck → 恢复码包裹） | ✅ 已落地 | Python 标准库 hmac 手拼 HKDF × `cryptography` 交叉核对 + AES-GCM 双实现；`src/keyring_core.dart` 纯函数组合，AAD / info 标签 / 错误码全部被向量锁死 |
+| SQLCipher 打开流程编排（§3.4，`pf_data/open_flow.dart`） | ✅ 已落地（纯 Dart） | 规格原文人工转录为期望值（与 NIST 锚点同理）；有序 PRAGMA 脚本 / iOS 明文头变体 / `user_version` 版本门 / NOTADB 双分支错误分类全部被向量锁死。真实 SQLCipher 驱动（drift / sqlcipher_flutter_libs）在 M2 只需实现 `RawSqliteSession` 十几行适配 |
 
-§7.6 第 ① 项 `pf_crypto` 原语层到此**完成**。仍在后面的：
-有状态 Keyring 服务（初始化 / 解锁 / 失败计数，对接 flutter_secure_storage，M2）、
-SQLCipher 打开流程、容器编解码器实装、导出器。
+§7.6 第 ① 项 `pf_crypto` 原语层到此**完成**；第 ② 项数据层的打开流程编排也已落地。
+仍在后面的：有状态 Keyring 服务（初始化 / 解锁 / 失败计数，对接
+flutter_secure_storage，M2）、SQLCipher 真实驱动与端到端打开（M2，需原生库）、
+容器编解码器实装、导出器。
 
 ---
 

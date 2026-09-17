@@ -14,6 +14,7 @@ import 'm0_params.dart';
 import 'm1_aesgcm.dart';
 import 'm1_hkdf.dart';
 import 'm2_crypto.dart';
+import 'm2_db.dart';
 import 'm2_keyring.dart';
 
 /// 全部内置驱动。
@@ -51,6 +52,9 @@ List<VectorDriver> defaultVectorDrivers() => const <VectorDriver>[
   KeyringKeyCheckOpenDriver(),
   KeyringRecoveryWrapDriver(),
   KeyringRecoveryUnwrapDriver(),
+  // ---- 数据层打开流程（纯 Dart 编排，真实 SQLCipher 驱动在 M2 对接）----
+  DbOpenPlanDriver(),
+  DbOpenClassifyDriver(),
 ];
 
 /// 标准注册表。

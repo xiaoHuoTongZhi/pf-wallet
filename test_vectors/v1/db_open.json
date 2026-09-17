@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "suite": "db_open",
+  "title": "SQLCipher 打开流程",
+  "description": "锁死 §3.4 打开脚本的顺序与内容（key → cipher 参数 → 安全 PRAGMA、iOS 明文头变体）以及打开期错误的分类（NOTADB 双分支）。期望值由规格原文人工转录，与 Dart 侧 PfSqlitePragma / classifySqliteOpenError 独立会合。",
+  "cases": [
+    {
+      "id": "db.open.plan.default",
+      "kind": "db.open.plan",
+      "title": "默认平台（Android/桌面）的完整打开脚本",
+      "milestone": "M1",
+      "input": {
+        "dekHex": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+        "plaintextHeaderBytes": 0
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "setupStatements": [
+            "PRAGMA key = \"x'303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f'\"",
+            "PRAGMA cipher_compatibility = 4",
+            "PRAGMA cipher_page_size = 4096",
+            "PRAGMA cipher_memory_security = ON",
+            "PRAGMA foreign_keys = ON"
+          ],
+          "postOpenStatements": [
+            "PRAGMA journal_mode = WAL",
+            "PRAGMA synchronous = NORMAL",
+            "PRAGMA busy_timeout = 5000",
+            "PRAGMA temp_store = MEMORY",
+            "PRAGMA secure_delete = ON",
+            "PRAGMA trusted_schema = OFF"
+          ]
+        }
+      },
+      "notes": "完全加密头：头 16 字节魔数也在密文里。",
+      "tags": [
+        "db",
+        "security"
+      ]
+    },
+    {
+      "id": "db.open.plan.ios-plaintext-header",
+      "kind": "db.open.plan",
+      "title": "iOS 变体：32 字节明文头声明必须在 key 之前",
+      "milestone": "M1",
+      "input": {
+        "dekHex": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+        "plaintextHeaderBytes": 32
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "setupStatements": [
+            "PRAGMA cipher_plaintext_header_size = 32",
+            "PRAGMA key = \"x'303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f'\"",
+            "PRAGMA cipher_compatibility = 4",
+            "PRAGMA cipher_page_size = 4096",
+            "PRAGMA cipher_memory_security = ON",
+            "PRAGMA foreign_keys = ON"
+          ],
+          "postOpenStatements": [
+            "PRAGMA journal_mode = WAL",
+            "PRAGMA synchronous = NORMAL",
+            "PRAGMA busy_timeout = 5000",
+            "PRAGMA temp_store = MEMORY",
+            "PRAGMA secure_delete = ON",
+            "PRAGMA trusted_schema = OFF"
+          ]
+        }
+      },
+      "notes": "§3.4 iOS 特例：NSFileProtection / 文件协调要读文件头。声明值建库时定死，之后不可更改。",
+      "tags": [
+        "db",
+        "security"
+      ]
+    },
+    {
+      "id": "db.open.plan.dek-too-short",
+      "kind": "db.open.plan",
+      "title": "密钥 31 字节 ⇒ 拒绝构造脚本",
+      "milestone": "M1",
+      "input": {
+        "dekHex": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e",
+        "plaintextHeaderBytes": 0
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFC_E_VALIDATION"
+      },
+      "notes": "原始密钥模式要求恰好 32 字节；长度不对宁可立刻失败，不能生成一段会被 SQLCipher 静默 KDF 的口令。",
+      "tags": [
+        "db",
+        "error"
+      ]
+    },
+    {
+      "id": "db.open.classify.notadb-password",
+      "kind": "db.open.classify",
+      "title": "'file is not a database'（code=26，keyCheck未过）⇒ PFK_E_WRONG_PASSWORD",
+      "milestone": "M1",
+      "input": {
+        "message": "file is not a database",
+        "resultCode": 26,
+        "keyVerifiedViaKeyCheck": false
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFK_E_WRONG_PASSWORD"
+      },
+      "notes": "§3.4 原文路径：NOTADB ⇒ 密码错（加密层无法区分密码错与库被换）。",
+      "tags": [
+        "db",
+        "error"
+      ]
+    },
+    {
+      "id": "db.open.classify.notadb-after-keycheck",
+      "kind": "db.open.classify",
+      "title": "'file is not a database'（code=26，keyCheck已过）⇒ PFD_E_OPEN",
+      "milestone": "M1",
+      "input": {
+        "message": "file is not a database",
+        "resultCode": 26,
+        "keyVerifiedViaKeyCheck": true
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFD_E_OPEN"
+      },
+      "notes": "keyCheck 已过、密钥已证明正确 ⇒ NOTADB 只能是库文件损坏或被替换，按库损坏处理。",
+      "tags": [
+        "db",
+        "error"
+      ]
+    },
+    {
+      "id": "db.open.classify.malformed",
+      "kind": "db.open.classify",
+      "title": "'database disk image is malformed'（code=11，keyCheck已过）⇒ PFD_E_OPEN",
+      "milestone": "M1",
+      "input": {
+        "message": "database disk image is malformed",
+        "resultCode": 11,
+        "keyVerifiedViaKeyCheck": true
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFD_E_OPEN"
+      },
+      "notes": "明确的损坏信号（含 WAL 损坏）——无论密钥状态如何都按库损坏。",
+      "tags": [
+        "db",
+        "error"
+      ]
+    },
+    {
+      "id": "db.open.classify.io-error",
+      "kind": "db.open.classify",
+      "title": "'unable to open database file'（code=14，keyCheck未过）⇒ PFD_E_OPEN",
+      "milestone": "M1",
+      "input": {
+        "message": "unable to open database file",
+        "resultCode": 14,
+        "keyVerifiedViaKeyCheck": false
+      },
+      "expect": {
+        "ok": false,
+        "errorCode": "PFD_E_OPEN"
+      },
+      "notes": "一般打开期失败（磁盘/权限/锁）不往密码错上猜：密码错只有 NOTADB 一种表现。",
+      "tags": [
+        "db",
+        "error"
+      ]
+    }
+  ]
+}

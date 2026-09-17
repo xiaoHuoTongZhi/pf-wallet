@@ -114,6 +114,9 @@ abstract final class PfSqlitePragma {
 
   /// 安全必需的 PRAGMA。任何一项缺失都视为实现缺陷。
   ///
+  /// 这是**审计集**（只查"有没有"，不查顺序）；有顺序要求的完整打开脚本
+  /// 见 [openSetup] 与 [postOpen]。二者覆盖本清单的全部语句。
+  ///
   /// 逐条理由：
   ///   - `temp_store = MEMORY`：SQLite 默认把排序 / 聚合的溢出数据写到磁盘临时文件，
   ///     而那个文件**是明文的**。一次 `ORDER BY amount DESC` 或 `GROUP BY category`
@@ -138,5 +141,69 @@ abstract final class PfSqlitePragma {
   static const List<String> shutdown = <String>[
     'PRAGMA optimize',
     'PRAGMA wal_checkpoint(TRUNCATE)',
+  ];
+
+  /// `cipher_compatibility` 锁定的 SQLCipher 大版本（§3.4 ②）。
+  ///
+  /// 显式锁版本：SQLCipher 5 若改默认参数，不锁定会导致"升级后老库打不开"。
+  static const int cipherCompatibility = 4;
+
+  /// 加密页大小（§3.4 ③）。建库与开库必须一致；4 KiB 是 SQLCipher 4.x 默认。
+  static const int cipherPageSize = 4096;
+
+  /// iOS 明文头的字节数（§3.4 iOS 特例，推荐 32）。
+  static const int iosPlaintextHeaderBytes = 32;
+
+  /// 打开连接**之前**必须执行的有序脚本（§3.4 ①–⑤，顺序不可换）。
+  ///
+  ///   1. （iOS）`cipher_plaintext_header_size` —— 必须在 key **之前**声明，
+  ///      且与建库时的值一致；否则头 32 字节明文会被当作密文参与解密，
+  ///      整库都解不开。该值在建库时定死，之后不可更改。
+  ///   2. `key`（原始密钥模式，见 [key]）
+  ///   3. `cipher_compatibility = 4` —— 在 key 之后立即锁版本，
+  ///      避免后续任何按默认参数解读密文的余地。
+  ///   4. `cipher_page_size = 4096`
+  ///   5. `cipher_memory_security = ON`
+  ///   6. `foreign_keys = ON`
+  ///
+  /// [plaintextHeaderBytes] 只允许 [iosPlaintextHeaderBytes]（iOS）或 0
+  /// （Android/桌面，完全加密头）。§3.4 允许两端头策略不同 ——
+  /// 库文件本来就不跨端传输（跨端走 `.pfb` 导出）。
+  static List<String> openSetup(Uint8List dek, {int plaintextHeaderBytes = 0}) {
+    if (plaintextHeaderBytes != 0 && plaintextHeaderBytes != iosPlaintextHeaderBytes) {
+      throw DomainError.validation(
+        detail: '明文头字节数只允许 0 或 $iosPlaintextHeaderBytes，实际 $plaintextHeaderBytes',
+      );
+    }
+    return <String>[
+      if (plaintextHeaderBytes > 0) 'PRAGMA cipher_plaintext_header_size = $plaintextHeaderBytes',
+      key(dek),
+      'PRAGMA cipher_compatibility = $cipherCompatibility',
+      'PRAGMA cipher_page_size = $cipherPageSize',
+      'PRAGMA cipher_memory_security = ON',
+      'PRAGMA foreign_keys = ON',
+    ];
+  }
+
+  /// 打开并验证密钥**之后**执行的有序脚本（§3.4 ⑦ + M0 增补）。
+  ///
+  /// 顺序即 [openSetup] 之后的执行顺序：
+  ///   - `journal_mode = WAL` 先行（影响后续所有写路径的文件布局）；
+  ///   - `synchronous = NORMAL`（WAL 下只可能丢最后一个事务，不损坏库）；
+  ///   - `busy_timeout = 5000`；
+  ///   - `temp_store = MEMORY`（安全要求，见 [securityRequired]）；
+  ///   - `secure_delete = ON`；
+  ///   - `trusted_schema = OFF`（M0 增补，§3.4 未列但属于安全收紧）。
+  ///
+  /// 审计不变式：[openSetup]（去 key 行）与本列表的**并集** ⊇
+  /// [securityRequired]（由单元测试钉死 —— `foreign_keys` 在 setup 段，
+  /// 其余在本列表）。
+  static const List<String> postOpen = <String>[
+    'PRAGMA journal_mode = WAL',
+    'PRAGMA synchronous = NORMAL',
+    'PRAGMA busy_timeout = 5000',
+    'PRAGMA temp_store = MEMORY',
+    'PRAGMA secure_delete = ON',
+    'PRAGMA trusted_schema = OFF',
   ];
 }
