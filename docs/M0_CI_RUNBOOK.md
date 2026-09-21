@@ -503,9 +503,201 @@ done                                  # 期望三个 204
 而不是 `push` —— 验收记录里要写清这一点，否则半年后看到「某提交的 run 是手动触发的」
 会误以为门禁自动跑过。
 
+#### 本次实测：为中间提交 `651932d` 补 gate3（2026-09-21）
+
+```bash
+SHA=$(git rev-parse 651932d)                    # 651932d3fffd5ae2cfdc90552020aab92d95567e
+git push origin $SHA:refs/heads/ci-651932d      # → * [new branch] 651932d -> ci-651932d
+# POST /repos/xiaoHuoTongZhi/pf-wallet/actions/workflows/gate3-vectors.yml/dispatches
+#   body {"ref":"ci-651932d"}                   → HTTP 204（给裸 SHA 会 422）
+# 跑完：https://github.com/xiaoHuoTongZhi/pf-wallet/actions/runs/35559468155
+#   黄金向量 · ubuntu-latest / macos-latest / windows-latest   completed success
+#   跨平台判定一致性                                            completed success
+git push origin --delete ci-651932d
+```
+
+三份 artifact（`vectors-report-<os>-651932d…`）里的 `report.json`：
+
+| 平台 | `totals` | `verdictDigest` |
+|---|---|---|
+| ubuntu-latest | total 155 / passed 155 / failed 0 / pending 0 | `4761c8138a3fc43812177116ec042ba1296c12eff266c9ebde02349790f6dcce` |
+| macos-latest | 同上 | 同上 |
+| windows-latest | 同上 | 同上 |
+
+即 `651932d` 的 gate3 = **155 条 / `4761c8138a3f…`**，与本地独立复算逐字符一致。
+（判决摘要只覆盖 `caseId|status`、**不含期望值**，所以「只改了 3 条 export 用例的
+期望字节」的提交 ① 与 `ef6d5c7` 的摘要完全相同 —— 这不是「没生效」，
+它生效的证据在关卡 2：`pf_io` 36 → 38。）
+
+**取证时的一个坑：优先拉 artifact，不要去拉作业日志。**
+`GET /actions/jobs/{id}/logs` 会 302 跳到 CDN 的签名 URL；签名 URL 自带凭据，
+**对它再加一个 `Authorization` 头就会被拒**（本次拿到 `HTTP 401`）。
+artifact 的 `archive_download_url` 是同一套机制，取法也一样：
+**手工处理 302，并对 CDN 那一次请求去掉 `Authorization`**。
+
+这一点是**客户端行为差异**，不是 GitHub 的问题：跟随重定向时是否保留自定义头，
+各客户端做法不同 —— Python `urllib` 会保留（于是踩坑），
+`curl -L` 跨主机时会丢掉凭据（于是反而不会）。判据：
+**东西在 401 之后仍然拿不到，就先怀疑是重定向过程中多带了凭据。**
+
+本次的做法（约 40 行 Python，一次性脚本、**故意不入库** ——
+它的存在价值只有这一次，命令与结论留在本节就够）：
+一个 `HTTPRedirectHandler` 子类让 `redirect_request` 返回 `None`（于是 302
+变成 `HTTPError` 而不是被自动跟随），从 `e.headers["Location"]` 取出签名 URL，
+再用**不带 `Authorization`** 的 opener 打开它。
+
 **为什么不干脆把中间提交都推成独立分支**：那等于每次双提交推送都多跑两轮三平台矩阵。
 双提交推的本意是「历史干净、便于回滚」，不是「每个提交都要过一遍 CI」，
 所以默认策略是**只验头提交**，需要中间提交的证据时按上面的流程单独补。
+
+### 1.9 ❌ 不许在主力工作区 `git checkout` 别的 SHA —— 用 `git worktree`（2026-09-21 事故）
+
+**这是一条禁令，不是一条建议。**
+
+上一节的流程（推临时分支 → `workflow_dispatch`）**全程零检出**，
+是取「某个已推送提交的 CI 证据」的正常做法。
+本节说的是另一件事：**要在本机看/跑某个旧 SHA 的内容**时该怎么做。
+
+#### 事故：一次性删掉 152 个工作区文件
+
+当时给中间提交 `651932d` 取 gate3 证据，为了省掉「推临时分支 + dispatch」，
+直接在主力工作区切了过去：
+
+```bash
+cd /d/workbuddy/pf-wallet
+git checkout --detach 651932d 2>&1 | tail -3     # ← 危险操作
+dart run packages/pf_testkit/bin/vector_report.dart
+git checkout main 2>&1 | tail -3
+```
+
+结果是这一进一出**从工作区删掉了 152 个文件**（`git status --porcelain` 列出
+152 条删除）。关键判据：删掉的**不是**「两个提交之间的差异」——
+连 `651932d` 里**同样存在**的文件也一起没了：
+
+| 清点项 | 事故后 | 应当 |
+|---|---|---|
+| `test_vectors/v1/*.json` | 1 | 17（`651932d` 上是 16） |
+| `packages/pf_io/lib/src/*.dart` | 0 | 7 |
+| `packages/pf_core/**` | 缺失 | 完整 |
+| `packages/pf_testkit/bin/vector_report.dart` | 缺失 | 存在 |
+
+紧接着 `dart run .../vector_report.dart` 以 `Could not find file` 失败（退出码 255）。
+
+**没有丢任何提交**：`HEAD` 与远端 `main` 全程都是 `9b897af`，
+工作区可以从 HEAD 完整重建 —— 但这是**运气**，见下面的「为什么这条禁令不留余地」。
+
+#### 恢复方式
+
+```bash
+cd /d/workbuddy/pf-wallet
+git status --porcelain | wc -l     # ① 先看清规模（当时 152）
+git rev-parse HEAD                 # ② 确认 HEAD 还在正确的提交上
+git ls-remote origin main          # ③ 确认远端也是同一个哈希
+git restore .                      # ④ 从 HEAD 重建工作区（幂等，可重复跑）
+git status --porcelain             # ⑤ 期望：空
+```
+
+恢复后按文件清点 + 功能复验（当时的实测值）：
+
+```
+test_vectors/v1/*.json        = 17   （期望 17）
+test_vectors/fixtures/*.json  = 1    （期望 1）
+packages/pf_io/lib/src/*.dart = 7    （期望 7）
+packages/pf_testkit/bin/vector_report.dart = 存在
+dart run …/vector_report.dart → 向量 199 条：通过 199，失败 0
+melos run vectors:coverage    → 40 个驱动全部有向量引用
+```
+
+`git restore .` 一次复原的前提是**要恢复的内容都在某个提交里**（这里是 HEAD）。
+若事故发生时工作区里有**未提交**的改动，那部分会**真的丢掉**，
+且没有任何命令能找回 —— 这就是下面那条禁令不留余地的原因。
+
+#### 机制（未完全定位，如实记录）
+
+删掉的文件多于「两个提交之间的差集」，所以不是正常的检出语义；
+确切成因没有被结论性地定位。两个可疑的加剧因素已被后续做法规避：
+
+1. **`| tail -3` 把 git 的诊断输出吃掉了。** `git checkout` 的进度与报错都走
+   stderr，被 `2>&1` 送进管道后只剩最后 3 行 —— 一次半途失败可以完全看不见。
+   **给会写工作区的 git 命令不要接管道。**
+2. **本机 bash 工具链在 PATH 缺 coreutils 时会报 `cd: null directory`**
+   （见 §1.2 的 shell 前提说明框）。工具链自身的路径解析处在这种状态下时，
+   对「大量文件重写」这类动作不可信。
+
+**判据不依赖对机制的猜测**：只要不动主力工作区，这两个因素都不起作用。
+
+#### 正确做法：`git worktree`
+
+**任何要切换工作区 SHA 的操作，一律用 `git worktree`，不许在主力工作区 `checkout`。**
+
+```bash
+cd /d/workbuddy/pf-wallet
+
+# ① 建一个独立工作树，指向目标 SHA。
+#    ⚠️ 路径必须写成 Windows 形式（D:/...）—— 写 /d/... 会被 git 重锚成 D:/d/...
+#       （MSYS 路径转换陷阱，本机实测过，见下）
+git worktree add --detach "D:/workbuddy/_wt-<短sha>" <sha>
+
+# ② 进去跑。worktree 与主工作区不共享 .dart_tool，要各自解析一次依赖
+cd /d/workbuddy/_wt-<短sha>
+flutter pub get
+dart run packages/pf_testkit/bin/vector_report.dart
+
+# ③ 用完清掉（--force 因为 worktree 里有未跟踪的 .dart_tool）
+cd /d/workbuddy/pf-wallet
+git worktree remove --force "D:/workbuddy/_wt-<短sha>"
+git worktree list                    # 期望只剩主工作区一行
+```
+
+`git worktree` 与 `git checkout` 的区别是**它不碰你的工作区**：新目录是独立检出，
+主工作区的文件、未提交改动、编辑器状态全都不动。代价是多一份磁盘与一次 `pub get`
+—— **这个代价就是本条禁令要买的东西。**
+
+**本机实测（2026-09-21，目标 SHA = `651932d`）**：
+
+```
+git worktree add --detach "D:/workbuddy/_wt-651932d" 651932d
+  → Preparing worktree (detached HEAD 651932d) … HEAD is now at 651932d
+git worktree list
+  → D:/workbuddy/pf-wallet    9b897af [main]
+  → D:/workbuddy/_wt-651932d  651932d (detached HEAD)
+主工作区 status 行数 = 0（被碰前 0，被碰后 0）
+主工作区 test_vectors/v1/*.json = 17（不变）
+worktree 内 test_vectors/v1/*.json = 16（= 651932d 的真值；第 17 个是提交 ② 加的）
+worktree 内 packages/pf_testkit/bin/vector_report.dart = 存在
+git worktree remove --force "D:/workbuddy/_wt-651932d"  → 目录消失，worktree list 只剩主工作区
+```
+
+**MSYS 路径转换陷阱（本次实测踩到）**：把目标目录写成 POSIX 形式
+`/d/workbuddy/_wt-651932d` 时，git 不会理解成 `D:\workbuddy\...`，
+而是把它当「D: 盘根下的 `d/workbuddy/...`」，**在 `D:\d\` 下建了一棵树**。
+`git worktree list` 会如实显示 `D:/d/workbuddy/_wt-651932d` —— 一眼能看出不对，
+但如果你不 `list` 就会在错的地方找文件。
+**规则：`git worktree` 的路径参数一律写 Windows 形式（`D:/...`）**；
+`git worktree remove` 用同一个形式即可正确回收（本次误建的那棵用 `rmdir` 清了残留空目录）。
+
+**这条规则不只适用于 `git worktree`。** 本机 bash 会把 `/d/...` 原样交给
+**Windows 原生程序**，后者按自己的规则解释它 —— 于是同一个陷阱会在别处复现。
+本次同一轮里又踩了一次：`python /d/workbuddy/_pfdispatch.py` 报
+
+```
+can't open file 'D:\\d\\workbuddy\\_pfdispatch.py': [Errno 2] No such file or directory
+```
+
+**凡是传给原生程序（`git` / `dart` / `python` / `flutter`）的路径参数，
+一律写 `D:/...`**；只有 bash 自己消化的路径（`cd`、重定向目标、`ls`）
+可以用 `/d/...`。写成 `D:/...` 两边都认，是最省事的写法。
+
+#### 何时根本不需要工作树
+
+| 你要的 | 用什么 | 要不要检出 |
+|---|---|---|
+| 「这个提交的 CI 过没过」 | 推临时分支 + `workflow_dispatch`（§1.8） | **不用** |
+| 「这个提交里某个文件长什么样」 | `git show <sha>:<path>` | **不用** |
+| 「这个提交的向量/测试在本机跑一遍」 | `git worktree` | 要（本节） |
+
+本次 `651932d` 的 gate3 证据就是这么取的：临时分支 + dispatch，
+**主力工作区从头到尾没有被碰过**。
 
 ---
 

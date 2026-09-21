@@ -23,8 +23,15 @@
 test_vectors/
   schema/vector.schema.json   格式的 JSON Schema（机器可读的规格说明）
   pending_baseline.json       允许处于 pending 的用例 ID，规则「只减不增」
+  fixtures/import_samples.json  .pfb 样本字节（hex 表示），导入器向量的输入侧原料
   v1/*.json                   向量本体
 ```
+
+`fixtures/` 之所以存在：`.pfb` 容器本体按 `tracked_paths.yaml` 的
+`tracked-vault-file` 规则**不允许入库**（B1 决策，2026-09-18），
+但导入器需要真实字节做输入。所以字节以 hex 落在 fixtures 里，
+`v1/import_payload.json` 内联同一批 hex（**向量必须自包含**：驱动不读文件系统），
+两者的逐字节一致由生成脚本的 `--check` 断言。
 
 `v1/` 这一层是格式版本目录。将来格式演进到 2 时新建 `v2/`，
 旧文件保持不动 —— 这样读方不需要同时理解两代格式。
@@ -114,10 +121,72 @@ SQLCipher 打开流程向量由 `tools/golden_vectors_gen/db_open.py` 生成
 版本从未发布过任何文件，旧三套向量整体替换为上表五套件，无迁移负担。
 同日裁决：manifest `contentHash` 覆盖口径 = **记录行**（不含 end 行，否则自指）。
 
-**全部 36 个驱动均已实现、均有向量引用，pending 为 0。**
+**全部 40 个驱动均已实现、均有向量引用，pending 为 0。**
 有状态 Keyring 服务（初始化 / 解锁 / 失败计数 / 对接 flutter_secure_storage）
 不在向量体系内 —— 它的本质是平台与 UI 编排，属于 M2；
 其依赖的纯组合规则（本目录的 `keyring` 套件）已被锁死。
+
+## 证据边界：哪些分支只有间接证据
+
+**门禁回答的是「每条向量都通过了吗」，不回答「每条分支都被向量走过了吗」。**
+后者没有机器判据，只能人写下来。本节记一处**明确接受的空洞**（2026-09-21）。
+
+> 这段本来该写在提交 `9b897af`（导入器提交 A）的提交信息里，
+> 但该提交推送后发现遗漏，**已推送的提交信息不再改写**（改写等于 force push，
+> 代价大于收益）。所以正式记录落在本节 —— 它是这段话的权威位置，
+> 不要在提交信息里找。
+
+### 空洞：`import.apply` 的「查出孤儿 → 整体中止」只在 1 条规则上有独立证据
+
+`import.apply.reference-rules-full` 让 **13 条引用完整性规则全部被执行过一次**，
+但「**n>0**（真的查出孤儿）→ 抛 `PFI_E_INCOMPATIBLE` → 整体回滚」
+这条**动作分支**只在 `txn.account_id` 上走过：
+
+| 要证明的事 | 有独立向量证据吗 | 谁给的 |
+| --- | --- | --- |
+| 13 条规则的 SQL 存在且文本正确 | ✅ 有 | `unusedCannedKeys` 跨实现对证：Dart 侧罐头键取自 `ImportIntegrityCheck.referenceRules`，Python 侧取自自己的 `REFERENCE_RULES`，两侧逐条深比对 —— 任一表拼错 / 列名写错 / 少一条规则，必有一条 apply 向量变红 |
+| n>0 的处置（抛码 + 整体回滚） | 只有 `txn.account_id` 这一路 | `import.apply.reference-missing`（`orphanViolations={'txn.account_id': 3}`） |
+| 四张新表（category / tag / budget / attachment）的 n>0 | ❌ **无独立证据** | —— |
+
+**为什么接受**：13 条规则产出的是同一个 `Map<String, int>`，由**同一个循环体**
+判定、**同一处 throw**。`reference-missing` 走的正是这段逻辑的 n>0 路径，
+新表与它走的是**同样的代码**，只有数据不同 —— 再补一条向量只是重复验证同一行。
+
+**什么时候这个理由不再成立（届时要补）**：一旦 13 条规则的 n>0 处置**分化**
+（例如某几张表改成软删、记台账、只警告不中止），「单点」这个前提就没了，
+四张表的 n>0 会立刻变成真缺口。判据是：**n>0 的处置是否仍是单点**。
+
+**自己核实这张矩阵**（不跑 Dart，几秒钟出结论；在 Git Bash 里执行）：
+
+```bash
+cd D:/workbuddy/pf-wallet
+python - <<'PY'
+import json, pathlib
+d = json.loads(pathlib.Path("test_vectors/v1/import_payload.json").read_text(encoding="utf-8"))
+for c in d["cases"]:
+    if c["kind"] != "import.apply":
+        continue
+    sql = " ".join(str(s) for s in c["expect"]["value"].get("statements", []))
+    print('%-24s 孤儿扫描=%2d  注入的孤儿=%s' % (
+        c["id"].split(".")[-1], sql.count("NOT IN"), c["input"].get("orphanViolations")))
+PY
+```
+
+2026-09-21 的实测输出（`孤儿扫描` 列 = 该用例真的跑了几条规则的 `NOT IN` 扫描）：
+
+```
+insert-new               孤儿扫描= 6  注入的孤儿={}
+idempotent-skip          孤儿扫描= 6  注入的孤儿={}
+file-sha256-short-circuit 孤儿扫描= 0  注入的孤儿={}
+conflict-deferred        孤儿扫描= 0  注入的孤儿={}
+backup-failed            孤儿扫描= 0  注入的孤儿={}
+reference-missing        孤儿扫描= 6  注入的孤儿={'txn.account_id': 3}
+reference-rules-full     孤儿扫描=13  注入的孤儿={}
+write-failure-rollback   孤儿扫描= 0  注入的孤儿={}
+quick-check-damaged      孤儿扫描= 0  注入的孤儿={}
+```
+
+「注入的孤儿」列只有一行非空 —— 这一行就是上表第三行「无独立证据」的全部含义。
 
 ## 怎么跑
 
