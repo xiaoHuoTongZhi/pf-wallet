@@ -101,7 +101,7 @@ scripts:
   # 放在关卡 1（单平台）而不是关卡 3（三平台矩阵）：本检查与被测平台无关，
   # 在矩阵里跑三次只是把同一份结论重复三遍。
   vectors:coverage:
-    description: 向量覆盖检查（已实现的驱动必须至少被一条向量引用）
+    description: 向量覆盖检查（已实现的驱动必须至少被一条向量引用；报告落 build/vectors/coverage.json）
     run: dart run packages/pf_testkit/bin/vector_report.dart --require-coverage --quiet
 
   # ---------- 自定义门禁脚本 ----------

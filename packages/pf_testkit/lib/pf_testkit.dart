@@ -34,6 +34,7 @@ library;
 
 export 'src/baseline.dart';
 export 'src/compare.dart';
+export 'src/coverage_report.dart';
 export 'src/driver.dart';
 export 'src/drivers/all.dart';
 export 'src/json_util.dart';

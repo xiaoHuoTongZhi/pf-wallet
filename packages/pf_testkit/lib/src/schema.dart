@@ -33,6 +33,12 @@ abstract final class VectorSchema {
   /// 运行报告输出路径（相对仓库根，被 .gitignore 忽略）。
   static const String reportFile = 'build/vectors/report.json';
 
+  /// 覆盖检查报告输出路径（相对仓库根，被 .gitignore 忽略）。
+  ///
+  /// 由 `--require-coverage` 产出，CI 把它当 artifact 传上去 ——
+  /// 见 [CoverageReport] 里关于「为什么不能只看 stdout」的说明。
+  static const String coverageReportFile = 'build/vectors/coverage.json';
+
   /// 漂移对照输出目录（相对仓库根，被 .gitignore 忽略）。
   static const String forgedDirectory = 'build/vectors/forged';
 

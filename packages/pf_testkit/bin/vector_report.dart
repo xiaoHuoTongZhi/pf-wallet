@@ -4,7 +4,11 @@
 ///   dart run packages/pf_testkit/bin/vector_report.dart
 ///   dart run packages/pf_testkit/bin/vector_report.dart --list-pending
 ///   dart run packages/pf_testkit/bin/vector_report.dart --update-baseline
+///   dart run packages/pf_testkit/bin/vector_report.dart --require-coverage
 ///   dart run packages/pf_testkit/bin/vector_report.dart --kind container.header.encode
+///
+/// `--require-coverage` 除了判定，还会把覆盖结论写成
+/// `build/vectors/coverage.json`（CI 当 artifact 传，见 [CoverageReport]）。
 ///
 /// 退出码：
 ///   0  全部通过，且 pending 集合与基线一致
@@ -36,6 +40,7 @@ Future<int> _run(List<String> argv) async {
       ArgParser()
         ..addOption('vectors', abbr: 'v', help: '向量目录（缺省 test_vectors/v1）')
         ..addOption('out', abbr: 'o', help: '报告输出路径（缺省 build/vectors/report.json）')
+        ..addOption('coverage-out', help: '覆盖检查报告输出路径（缺省 build/vectors/coverage.json）')
         ..addFlag('list-pending', negatable: false, help: '只列出尚未实现的用例，然后退出')
         ..addFlag(
           'update-baseline',
@@ -155,23 +160,94 @@ Future<int> _run(List<String> argv) async {
   if (args.flag('require-coverage')) {
     if (!filter.isEmpty) {
       stdout.writeln('（带筛选条件运行，跳过覆盖检查）');
-    } else if (run.uncoveredKinds.isEmpty) {
-      stdout.writeln('✓ 覆盖检查：${registry.kinds.length} 个驱动全部有向量引用');
     } else {
-      stdout
-        ..writeln()
-        ..writeln('✗ 覆盖检查：${run.uncoveredKinds.length} 个已实现的驱动没有任何向量引用：')
-        ..writeln(run.uncoveredKinds.map((String k) => '    - $k').join('\n'))
-        ..writeln()
-        ..writeln(
-          '这说明有实现先于向量落地了 —— 也就是「实现算出什么、测试就接受什么」。'
-          '请为它先补上独立生成的期望值（见 test_vectors/README.md），再保留实现。',
-        );
-      code = 1;
+      final coverage = _buildCoverageReport(registry: registry, suites: suites, run: run);
+
+      if (coverage.ok) {
+        stdout.writeln(coverage.summaryLine);
+      } else {
+        stdout
+          ..writeln()
+          ..writeln(coverage.summaryLine);
+        if (coverage.uncoveredKinds.isNotEmpty) {
+          stdout
+            ..writeln('没有任何向量引用的已实现驱动：')
+            ..writeln(coverage.describeUncovered())
+            ..writeln()
+            ..writeln(
+              '这说明有实现先于向量落地了 —— 也就是「实现算出什么、测试就接受什么」。'
+              '请为它先补上独立生成的期望值（见 test_vectors/README.md），再保留实现。',
+            );
+        }
+        if (coverage.orphanKinds.isNotEmpty) {
+          stdout
+            ..writeln('被向量引用、但注册表里没人认领的 kind：')
+            ..writeln(coverage.describeOrphans())
+            ..writeln()
+            ..writeln(
+              '这不是缺向量，而是**接线断了**：要么向量的 kind 拼错了，'
+              '要么驱动的注册名改了。这些用例在运行器里已经是 fail（不是跳过），'
+              '所以别只看「覆盖」两个字 —— 先按上面的 kind 名去 '
+              'packages/pf_testkit/lib/src/drivers/ 找同名驱动。',
+            );
+        }
+        code = 1;
+      }
+
+      // 报告先落盘、再返回退出码：红的时候恰恰最需要这份证据，
+      // 所以「没通过就不写文件」是错的（artifact 会空着）。
+      try {
+        final coveragePath = _resolveCoverageReportPath(repoRoot, args);
+        File(coveragePath).parent.createSync(recursive: true);
+        File(coveragePath).writeAsStringSync('${coverage.toPrettyJson()}\n', encoding: utf8);
+        if (!args.flag('quiet')) {
+          stdout.writeln('覆盖检查报告已写入 ${p.relative(coveragePath, from: repoRoot.path)}');
+        }
+      } on FileSystemException catch (error) {
+        stderr.writeln('✗ 覆盖检查报告写入失败：${error.message}');
+        return 2;
+      }
     }
   }
 
   return code;
+}
+
+/// 汇总一次覆盖检查的结果。
+///
+/// [CoverageReport.vectorCounts] 只投影到**已注册**的 kind 上：
+/// 向量写了但没人认领的 kind 属于接线问题，混进来会把驱动数撑大 ——
+/// 那样 `drivers` 计数就与 `registry.kinds.length` 对不上了。
+/// 但它们**不是**被丢掉：同一个循环顺手收进 [CoverageReport.orphanCounts]，
+/// 让报告两个方向都能判（漏写向量 / 写错 kind）。
+CoverageReport _buildCoverageReport({
+  required VectorRegistry registry,
+  required List<PfVectorSuite> suites,
+  required VectorRun run,
+}) {
+  final rawCounts = <String, int>{};
+  for (final suite in suites) {
+    for (final testCase in suite.cases) {
+      rawCounts.update(testCase.kind, (int n) => n + 1, ifAbsent: () => 1);
+    }
+  }
+
+  final registered = registry.kinds.toSet();
+  final report = run.report;
+  return CoverageReport(
+    generatedAt: report.generatedAt,
+    dartVersion: report.dartVersion,
+    operatingSystem: report.operatingSystem,
+    vectorCounts: <String, int>{for (final kind in registry.kinds) kind: rawCounts[kind] ?? 0},
+    orphanCounts: <String, int>{
+      for (final entry in rawCounts.entries)
+        if (!registered.contains(entry.key)) entry.key: entry.value,
+    },
+    passed: report.passed,
+    failed: report.failed,
+    pending: report.pending,
+    uncoveredKinds: run.uncoveredKinds,
+  );
 }
 
 Directory _resolveVectorsDirectory(Directory repoRoot, ArgResults args) {
@@ -186,6 +262,14 @@ String _resolveReportPath(Directory repoRoot, ArgResults args) {
   final raw = args.option('out');
   if (raw == null) {
     return p.join(repoRoot.path, VectorSchema.reportFile);
+  }
+  return p.isAbsolute(raw) ? raw : p.join(repoRoot.path, raw);
+}
+
+String _resolveCoverageReportPath(Directory repoRoot, ArgResults args) {
+  final raw = args.option('coverage-out');
+  if (raw == null) {
+    return p.join(repoRoot.path, VectorSchema.coverageReportFile);
   }
   return p.isAbsolute(raw) ? raw : p.join(repoRoot.path, raw);
 }

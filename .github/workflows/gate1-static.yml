@@ -175,6 +175,9 @@ jobs:
       # 而它恰恰是方案 §7.6 第一条顺序原则要禁止的事：
       # 实现算出什么就接受什么，向量失去「独立期望值」的意义。
       # 本检查与被测平台无关，故放在单平台关卡而不是三平台矩阵。
+      # 这条检查的结论会写成 build/vectors/coverage.json（与 build/guards/*.json 同构），
+      # 由下面的 artifact 步骤传上去。命令本身走 --quiet，因为它跑的是全量向量，
+      # 报告内容与关卡 3 的 report.json 重复；这里只关心「哪些驱动没被引用」。
       - name: 向量覆盖检查（已实现的驱动必须至少被一条向量引用）
         run: melos run vectors:coverage
 
@@ -185,5 +188,19 @@ jobs:
         with:
           name: guards-report-${{ github.sha }}
           path: build/guards/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # 覆盖检查的证据单独传一份。
+      #
+      # 它原本只出现在 stdout 里：日志会过期、不可机读，而「这次提交的每个
+      # 已实现驱动都被向量引用过」是验收项之一，验收要求「每个勾后面都能点开看」。
+      # 用 if: always() 是刻意的 —— 覆盖检查**红的时候**最需要这份明细。
+      - name: 上传覆盖检查报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vectors-coverage-report-${{ github.sha }}
+          path: build/vectors/coverage.json
           if-no-files-found: warn
           retention-days: 14

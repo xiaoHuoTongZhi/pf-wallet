@@ -92,16 +92,22 @@ CI 上暴露的东西：**工具链在另外两台操作系统上的行为**、*
 ### 0.3 本机复检结果（改动后）
 
 ```
-format     Formatted 111 files (0 changed)       ← M0 当时 76；判定线是 0 changed
+format     Formatted 118 files (0 changed)       ← M0 当时 76；判定线是 0 changed
 analyze    No issues found!                      （--fatal-infos --fatal-warnings）
 guards     6 项检查，error=0 warning=13          （deps 11 / manifest 2，均为刻意保留）
-test       414 项，全通过：
-             pf_core 91 / pf_crypto 152 / pf_data 78 / pf_io 36 / pf_testkit 57 / guards 80
+test       库包合计 428 项，全通过：
+             pf_core 91 / pf_crypto 152 / pf_data 78 / pf_io 36 / pf_testkit 71
+             （另 pf_guards 80 计在其自身门禁，pf_ui 19 / pf_mobile 3 计在关卡 2 的
+              widget 作业，均不计入这个合计）
              （pf_crypto 165 → 152：76B 旧容器单测随容器裁决整体替换为 §3.3 128B 版；
-              pf_io 23 → 36：+13 条导出载荷/装配器测试）
+              pf_io 23 → 36：+13 条导出载荷/装配器测试；
+              pf_testkit 57 → 66 → 71：覆盖检查报告落盘 + 两个方向的覆盖判定）
 vectors    155 条通过，失败 0，待实现 0，判定摘要 4761c8138a3f…
              （158 → 152：旧 76B 容器三套件 28 条 → §3.3 五套件 22 条；152 → 155：+3 条 export_payload）
-vectors:cov 36 个驱动全部有向量引用（反例：--vectors 指向单个套件 → 退出码 1，列出 21 个）
+vectors:cov 36 个驱动全部有向量引用；结论落 build/vectors/coverage.json
+             （反例两个方向各实测一次：--vectors 指向单个套件 → 退出码 1，列出 21 个
+              无人引用的 kind；注入一条 kind 拼错的向量 → 退出码 1、ok=false、
+              uncoveredKinds 为空而 orphanKinds=[export.payload.ndjsonX]）
 新增工具    assert_test_report.dart 三条分支（0/1/2）逐一实测通过
 ```
 
@@ -327,7 +333,7 @@ gh repo create pf-wallet --private --source=. --remote=origin --push
 
 | 项 | 建议 | 说明 |
 |---|---|---|
-| Actions artifact and log retention | 90 天（默认即可） | 各 workflow 内已分别声明 `retention-days: 14`（门禁报告 / 覆盖率 / widget 报告）与 `30`（向量报告）。**真正需要长期留的是向量报告** —— 它是跨平台一致性的唯一凭据 |
+| Actions artifact and log retention | 90 天（默认即可） | 各 workflow 内已分别声明 `retention-days: 14`（门禁报告 / 覆盖检查报告 / 覆盖率 / widget 报告）与 `30`（向量报告）。**真正需要长期留的是向量报告** —— 它是跨平台一致性的唯一凭据 |
 
 **③ Settings → Branches（或 Rulesets）→ 保护 `main`**
 
@@ -453,6 +459,54 @@ PY
 非 `docs/**` 文件），或者干脆取消掉前一次的运行。要省 CI 也省事，
 就把它们合成一次推送。
 
+### 1.8 多提交推送时，中间提交根本不会跑 CI（2026-09-21 实测）
+
+上一节说的是「同分支连续两次推送」，这一节是**同一次推送里的多个提交**。
+
+`push` 事件只为**头提交**创建运行：一次 `git push` 带上 N 个提交时，
+三个 workflow 各创建一个 run，`head_sha` 都是头提交。中间提交
+（`git log` 里排在头提交下面的那些）**一个 run 都拿不到**，
+在 API 里按 sha 查是 `total_count: 0`，不是 `cancelled`、也不是失败。
+
+实测两例：
+
+| 推送 | 中间提交 | 头提交 |
+|---|---|---|
+| `2243299` + `218d4ef` | 无任何 run（`total_count: 0`） | gate1 / gate2 / gate3 各一个 run |
+| `5c56eb6` + `26eec8e` | 同上 | 同上 |
+
+代价：**「中间提交被门禁验过」这件事不成立**，除非它的改动被头提交的树完整包含
+（§1.7 的同一条推理）。要拿到中间提交自己的证据，只能手动补跑：
+
+```bash
+cd D:/workbuddy/pf-wallet
+SHA=$(git rev-parse <中间提交>)          # 需要完整 40 位
+
+# ① 为它建一个临时分支（dispatch 的 ref 只接受分支/标签名，**给裸 SHA 会 422**）
+& 'C:\Program Files\Git\bin\bash.exe' -lc "cd /d/workbuddy/pf-wallet && git push origin $SHA:refs/heads/ci-<短sha>"
+
+# ② 三个关卡各补一次（token 用 git credential fill 取，注意在**系统 Git bash** 里取：
+#    PortableGit 自带的 bash 里 credential helper 没有终端，会挂死）
+TOKEN=$(cat /tmp/pf_token.txt)
+for wf in gate1-static.yml gate2-test.yml gate3-vectors.yml; do
+  curl -s -o /dev/null -w "$wf -> %{http_code}\n" -X POST \
+    -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+    https://api.github.com/repos/xiaoHuoTongZhi/pf-wallet/actions/workflows/$wf/dispatches \
+    -d '{"ref":"ci-<短sha>"}'
+done                                  # 期望三个 204
+
+# ③ 跑完（gate3 是三平台矩阵，约 3~5 分钟）后删掉临时分支
+& 'C:\Program Files\Git\bin\bash.exe' -lc "cd /d/workbuddy/pf-wallet && git push origin --delete ci-<短sha>"
+```
+
+取证口径：`workflow_dispatch` 产生的 run，其 `event` 字段是 `workflow_dispatch`
+而不是 `push` —— 验收记录里要写清这一点，否则半年后看到「某提交的 run 是手动触发的」
+会误以为门禁自动跑过。
+
+**为什么不干脆把中间提交都推成独立分支**：那等于每次双提交推送都多跑两轮三平台矩阵。
+双提交推的本意是「历史干净、便于回滚」，不是「每个提交都要过一遍 CI」，
+所以默认策略是**只验头提交**，需要中间提交的证据时按上面的流程单独补。
+
 ---
 
 ## 2. 三关卡在 GitHub Actions 上的预期行为
@@ -479,8 +533,9 @@ PY
 | 检查格式 | `Formatted 87 files (0 changed)`（M0 当时是 76；判定线是 `0 changed`，不是这个数字） |
 | 静态分析 | 每个包 `No issues found!` |
 | 六个 guards | 每项 `error=0`（`deps` / `banned-api` / `logging` / `manifest` / `version` / `tracked-paths`） |
-| 向量覆盖检查 | `✓ 覆盖检查：35 个驱动全部有向量引用`（见 §3 的「P1 · 向量覆盖检查」） |
+| 向量覆盖检查 | `✓ 覆盖检查：35 个驱动全部有向量引用`，同时把结论写成 `build/vectors/coverage.json`（见 §3 的「P1 · 向量覆盖检查」） |
 | 上传门禁报告 | artifact `guards-report-<sha>`，内含 `deps/banned-api/logging/manifest/version/tracked-paths.json` |
+| 上传覆盖检查报告 | artifact `vectors-coverage-report-<sha>`，内含 `coverage.json`（`ok` / `totals` / `uncoveredKinds` / `orphanKinds` / `drivers` / `orphans`）。**红的时候也会传** —— 用 `if: always()`，因为红的时候恰恰最需要这张明细 |
 
 失败时最常见的五条：格式不一致（本机没跑 `dart format` 就提交）、
 `guards:version`（改了 `PfBuildInfo.appVersion` 忘了改 pubspec）、
@@ -848,14 +903,29 @@ git status --short                                  # 期望只剩你本来要�
 
 ### P1 · 向量覆盖检查（`vectors:coverage`）失败 —— 通常是「有实现、没向量」
 
-**症状**：
+**症状（方向一：漏写向量）**：
 
 ```
-✗ 覆盖检查：N 个已实现的驱动没有任何向量引用：
+✗ 覆盖检查：36 个驱动，1 个已实现驱动没有任何向量引用
+没有任何向量引用的已实现驱动：
     - kdf.hkdf.expand
     - ...
 这说明有实现先于向量落地了 —— 也就是「实现算出什么、测试就接受什么」。
 ```
+
+**症状（方向二：kind 写错／改过名）**：
+
+```
+✗ 覆盖检查：36 个驱动，1 个 kind 被向量引用但未注册
+被向量引用、但注册表里没人认领的 kind：
+    - export.payload.ndjsonX（被 1 条向量引用）
+```
+
+**两个方向都判，是刻意的**：`ok` 要求 `uncoveredKinds` 与 `orphanKinds`
+同时为空。方向二在运行器里本来就是 fail（寄存器查不到 → 该条用例判失败，
+**不是跳过**），所以门禁不会漏；但覆盖报告早期只投影已注册的 kind，
+于是会出现「`coverage.json` 里 `ok: true`，而这个 run 是红的」——
+一份与门禁结论相反的证据比没有证据更坏，因此 `orphanKinds` 必须进判定。
 
 **它为什么必须是一条会失败的门禁**（而不是一句提醒）：
 `vector_report.dart` 早就把「驱动已实现但无人引用」打成 warning 了，
@@ -871,6 +941,7 @@ git status --short                                  # 期望只剩你本来要�
 | 报的 kind 是**你这次新加的**，向量文件里找不到对应 `kind` | 漏写向量（或 `kind` 拼写与驱动不一致） | 按 `test_vectors/README.md` 补向量；期望值必须来自独立实现／标准文档，不能跑一遍本实现抄回来 |
 | 报的 kind 是**别人加的**，且你只是改了这一条 | 大概率与本次改动无关 —— 检查一下是不是把某个向量文件误删/改名了 | `git status` 看 `test_vectors/` 下有没有消失的文件 |
 | 报的是 `*.extract` 却写着 `*.derive` | 驱动的 `kind` 与向量的 `kind` 之间只差一个词 | 改其中一处，并想清楚契约名应该是哪个 —— 名字一旦被向量引用就不该再改 |
+| 出现在 **`orphanKinds`**（方向二） | 向量引用了一个注册表里不存在的 `kind`；该条用例在报告里已标 fail | 按 kind 名去 `packages/pf_testkit/lib/src/drivers/` 找同名驱动：找不到 = 向量拼错，找到了但注册的 kind 不同 = 改 `all.dart` 里的注册名要慎重（kind 是被向量引用的契约，改名要连向量一起改） |
 
 **本机复现（含反例）**：
 
