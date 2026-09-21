@@ -8,5 +8,8 @@ library;
 
 export 'src/export_payload.dart';
 export 'src/exporter.dart';
+export 'src/import_apply.dart';
+export 'src/import_file.dart';
+export 'src/import_payload.dart';
 export 'src/record_version.dart';
 export 'src/transfer.dart';

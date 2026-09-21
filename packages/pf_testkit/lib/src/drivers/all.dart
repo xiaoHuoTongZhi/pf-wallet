@@ -15,6 +15,7 @@ import 'm1_balance.dart';
 import 'm1_container.dart';
 import 'm1_export.dart';
 import 'm1_hkdf.dart';
+import 'm1_import.dart';
 import 'm2_crypto.dart';
 import 'm2_db.dart';
 import 'm2_keyring.dart';
@@ -62,6 +63,11 @@ List<VectorDriver> defaultVectorDrivers() => const <VectorDriver>[
   DbBalanceReplayDriver(),
   // ---- M1 导出器：§3.2 载荷编码（容器封包复用上面的 container 驱动）----
   ExportPayloadNdjsonDriver(),
+  // ---- M1 导入器：§4.3 阶段 A–I（读文件 → 解载荷 → 分流 → 写库编排）----
+  ImportTriageDriver(),
+  ImportPayloadDecodeDriver(),
+  ImportFileReadDriver(),
+  ImportApplyDriver(),
 ];
 
 /// 标准注册表。

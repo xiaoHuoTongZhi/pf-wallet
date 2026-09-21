@@ -37,6 +37,7 @@ export 'src/compare.dart';
 export 'src/coverage_report.dart';
 export 'src/driver.dart';
 export 'src/drivers/all.dart';
+export 'src/fakes/scripted_db.dart';
 export 'src/json_util.dart';
 export 'src/load.dart';
 export 'src/outcome.dart';

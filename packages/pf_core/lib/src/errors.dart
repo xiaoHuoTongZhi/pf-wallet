@@ -94,6 +94,28 @@ abstract final class PfErrorCode {
   /// 导出自校验失败（写出的文件读不回来）。
   static const String ioSelfCheckFailed = 'PFI_E_SELF_CHECK';
 
+  // ---- PFI：导入侧三态分流（§4.3 阶段 A–D）----
+  //
+  // 这三个码是**导入器对用户的裁决**，不是「哪一项检查失败」的细节码。
+  // 细节由低层码承担（PFB_E_AUTH_FAILED / PFB_E_DIGEST_MISMATCH /
+  // PFB_E_VERSION_UNSUPPORTED / PFB_E_HEADER_INVALID …），
+  // 而 UI 只认这三态 —— 因为用户能做的动作只有三种：
+  // 重新输密码、换一个文件、升级应用。
+  // 三者互斥且穷尽（由 classifyImportFailure 保证，向量锁死）：
+  // 「文件完好但解不开」= 密码错；「文件本身就坏了」= 损坏；
+  // 「文件来自更新的版本」= 版本不兼容。
+  /// 密码错误（文件本身完好）。
+  static const String ioWrongPassword = 'PFI_E_WRONG_PASSWORD';
+
+  /// 文件损坏（与密码无关）。
+  static const String ioCorrupt = 'PFI_E_CORRUPT';
+
+  /// 文件版本高于本实现（容器格式或载荷格式）。
+  static const String ioVersionIncompatible = 'PFI_E_VERSION';
+
+  /// 导入前自动备份失败 —— 没有备份就不允许开始写入（§4.5）。
+  static const String ioBackupFailed = 'PFI_E_BACKUP';
+
   // ---- PFC：领域层 ----
   /// 跨币种运算。
   static const String moneyCurrencyMismatch = 'PFC_E_CURRENCY_MISMATCH';
@@ -355,6 +377,46 @@ final class ImportExportError extends PfError {
         userMessage:
             '导出没有成功（写出的文件无法通过完整性校验），可能是存储介质异常。'
             '没有留下损坏的文件，请更换存储位置后重试。',
+        cause: cause,
+      );
+
+  /// 密码错误 —— 文件本身完好（免密摘要已通过）。
+  ///
+  /// 这条提示必须把「文件没问题」说出来：用户看到「导入失败」的第一反应是
+  /// 「文件坏了，我的备份没了」，而实际上只需要重输一次密码。
+  static ImportExportError wrongPassword({String? detail}) => ImportExportError(
+    code: PfErrorCode.ioWrongPassword,
+    message: '导入密码错误：${detail ?? '文件解密失败'}',
+    userMessage: '密码不正确。这份备份文件本身是完好的，请重新输入导出时设置的密码（可与主密码不同）。',
+  );
+
+  /// 文件损坏 —— 与密码无关（在解密之前就已判定）。
+  ///
+  /// [detail] 必须写清**在哪一步**发现损坏：头部、免密内容摘要、还是分块认证。
+  /// 三者的排查方向不同（截断 / 传输损坏 / 篡改），而用户只能做一件事：换一份文件。
+  static ImportExportError corrupted({required String detail}) => ImportExportError(
+    code: PfErrorCode.ioCorrupt,
+    message: '导入文件已损坏：$detail',
+    userMessage:
+        '这份备份文件已损坏（不是密码问题）。请改用另一份备份文件；'
+        '若它来自网盘或聊天软件，请重新下载一次再试。',
+  );
+
+  /// 版本不兼容（容器格式或载荷格式高于本实现）。
+  static ImportExportError versionIncompatible({required String detail}) => ImportExportError(
+    code: PfErrorCode.ioVersionIncompatible,
+    message: '导入文件版本过高：$detail',
+    userMessage: '这份备份由更新版本的应用导出。请先升级应用，你的数据没有被修改。',
+  );
+
+  /// 导入前自动备份失败。**不允许跳过备份继续写入** —— 没有备份就没有退路。
+  static ImportExportError backupFailed({required String detail, Object? cause}) =>
+      ImportExportError(
+        code: PfErrorCode.ioBackupFailed,
+        message: '导入前自动备份失败：$detail',
+        userMessage:
+            '无法创建导入前的自动备份（通常是存储空间不足），因此没有开始导入。'
+            '你的数据没有被修改。请清理空间后重试。',
         cause: cause,
       );
 }
