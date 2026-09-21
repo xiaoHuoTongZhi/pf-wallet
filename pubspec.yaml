@@ -24,6 +24,7 @@ workspace:
   - packages/pf_testkit
   - packages/pf_ui
   - tools/guards
+  - tools/pf_cli
 
 # 仅根节点持有的开发依赖：所有 workspace 成员都能解析到，
 # 因此各成员无需重复声明（这是 pub workspaces 的价值之一）。

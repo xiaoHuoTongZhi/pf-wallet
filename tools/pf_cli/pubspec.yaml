@@ -1,0 +1,20 @@
+name: pf_cli
+description: >-
+  PF Wallet 命令行工具（`pf`）：`info` / `verify` 只读诊断在 M1 落地，
+  `init` / `seed` / `export` / `import` / `dump` 在 M1 收口的第二步（带 SQLCipher）落地。
+  纯 Dart 实现，不依赖 Flutter —— 因此可以在 CI 的纯 Dart 作业里跑端到端往返验收。
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  args: ^2.6.0
+  pf_core: ^0.1.0
+  pf_crypto: ^0.1.0
+  pf_io: ^0.1.0
+
+dev_dependencies:
+  test: ^1.25.0

@@ -313,6 +313,45 @@ final class ImportedFile {
   bool get isIncremental => (header.featureFlags & PfbFlags.bitIncremental) != 0;
 }
 
+/// 阶段 A+B 的产物：**这份文件是什么** —— 全程不解密、不需要密码。
+///
+/// 单列一个类型，而不是把这些字段摊在 [ImportedFile] 上，是因为两种调用的
+/// 前提不同：`inspect` 只要有文件字节（「用户选了个文件，先告诉我这是什么」），
+/// `read` 还要密码才能进到载荷层。让「不解密的那一半」有独立入口，
+/// 是 CLI 的 `info` / `verify` 能与导入器**共用同一份头部校验逻辑**的前提。
+final class PfbFileInspection {
+  const PfbFileInspection({
+    required this.header,
+    required this.verdict,
+    required this.fileSha256Hex,
+  });
+
+  final PfbHeader header;
+
+  /// 免密完整性判定（阶段 B）。**不一致时也照原样返回**，不在这里抛 ——
+  /// 「检查」与「不一致时怎么办」是两件事：导入要中止，而 CLI 的 `info`
+  /// 恰恰需要把 `declaredHex` / `computedHex` 打给用户看。
+  /// 中止策略留在调用方（[PfbImportReader.read]）。
+  final PfbContentDigestVerdict verdict;
+
+  /// 整文件字节的 SHA-256（幂等短路的键，§4.3 阶段 E）。
+  final String fileSha256Hex;
+
+  /// 内容摘要是否与头部声明一致。为 false 时**不要**再尝试解密。
+  bool get isIntact => verdict.matches;
+
+  bool get isMultiVolume => header.volumeTotal > 1;
+
+  bool get hasAttachments => (header.featureFlags & PfbFlags.bitHasAttachments) != 0;
+
+  bool get isIncremental => (header.featureFlags & PfbFlags.bitIncremental) != 0;
+
+  @override
+  String toString() =>
+      'PfbFileInspection(v${header.formatVersion}, '
+      'plaintext=${header.plaintextLength}, chunks=${header.chunkCount}, intact=$isIntact)';
+}
+
 /// 导入侧的文件读取器：容器 → 明文载荷（§4.3 阶段 A–D）。
 ///
 /// 分卷（阶段 F）与预览/裁决（阶段 G）不在本类 —— 分卷是 M3 的文件网关，
@@ -326,13 +365,17 @@ final class PfbImportReader {
 
   final int maxPayloadVersion;
 
-  Future<ImportedFile> read({
-    required Uint8List fileBytes,
-    required Uint8List password,
-    required String fileName,
-  }) async {
-    // ── 阶段 A：头部（128 字节，不解密）──────────────────────────────────
-    //
+  /// 阶段 A+B：只读头部（128 字节）+ 免密完整性。**不需要密码。**
+  ///
+  /// [read] 的前半段就是它 —— read() 调用本方法，而不是把这几步重抄一遍。
+  /// 复制的代价不是多写几行，而是**两份会分叉**：某天在一条路径上补了新校验，
+  /// 另一条静默地不查，而两条路径给出不同结论时没有任何测试会响。
+  /// 同理，本方法内部也只调用 `_requireMagic` / `_requireKnownFeatureFlags` /
+  /// `PfbHeader.decode` / `PfbContainer.verifyContentDigest` 各一次。
+  ///
+  /// 抛出：魔术不符 / 未知特性位 / 头部结构或 CRC 不自洽 / 文件短于「头+尾」。
+  /// 三者都收敛成 [ImportFailure] 的三态错误码，不只漏低层码。
+  PfbFileInspection inspect({required Uint8List fileBytes}) {
     // 先做两件**不解析**的廉价检查：魔数与特性位。理由不是性能，而是
     // 语义 —— 「这不像是本应用的文件」与「这文件用了本版本不认识的特性」
     // 是两种完全不同的处境，而它们都发生在 CRC 之前（§4.3 阶段 A 的顺序）。
@@ -348,23 +391,43 @@ final class PfbImportReader {
       throw _triage(ImportStage.header, error);
     }
 
-    // ── 阶段 B：免密完整性（区分「损坏」与「密码错」的全部依据）──────────
-    //
-    // 这一步**必须**被包住：`verifyContentDigest` 对「文件短于 头+尾部」的情况
-    // 抛的是低层码 `PFB_E_TRUNCATED`。让它直接冒泡出去，用户会收到一个
-    // 低层错误码而不是三态之一 —— 那正是本文件存在的理由（把细节收敛成
-    // 三种可执行的动作）。包住之后，所有「字节不对」都在这里归为「损坏」。
+    // 阶段 B：免密完整性。这一步**必须**被包住：`verifyContentDigest` 对
+    // 「文件短于 头+尾部」的情况抛的是低层码 `PFB_E_TRUNCATED`。让它直接
+    // 冒泡出去，用户会收到一个低层错误码而不是三态之一 —— 那正是本文件
+    // 存在的理由（把细节收敛成三种可执行的动作）。包住之后，所有「字节不对」
+    // 都在这里归为「损坏」。
     final PfbContentDigestVerdict verdict;
     try {
       verdict = PfbContainer.verifyContentDigest(fileBytes);
     } on PfError catch (error) {
       throw _triage(ImportStage.integrity, error);
     }
-    if (!verdict.matches) {
+
+    return PfbFileInspection(
+      header: header,
+      verdict: verdict,
+      fileSha256Hex: Sha256.instance.hashHex(fileBytes),
+    );
+  }
+
+  Future<ImportedFile> read({
+    required Uint8List fileBytes,
+    required Uint8List password,
+    required String fileName,
+  }) async {
+    // ── 阶段 A+B：头部与免密完整性（与 CLI 的 info 共用同一份实现）──────
+    final inspection = inspect(fileBytes: fileBytes);
+    final header = inspection.header;
+
+    // 「摘要不符 ⇒ 中止」是**导入侧的策略**，不属于 inspect 的职责：
+    // CLI 的 info 在同样的情况下要把 declared/computed 打出来而不是中止。
+    if (!inspection.verdict.matches) {
       throw _triage(
         ImportStage.integrity,
         ImportExportError.corrupted(
-          detail: '免密内容摘要不符（声明 ${verdict.declaredHex}，实际 ${verdict.computedHex}）',
+          detail:
+              '免密内容摘要不符（声明 ${inspection.verdict.declaredHex}，'
+              '实际 ${inspection.verdict.computedHex}）',
         ),
       );
     }
@@ -409,7 +472,7 @@ final class PfbImportReader {
     return ImportedFile(
       fileBytes: fileBytes,
       header: header,
-      fileSha256Hex: Sha256.instance.hashHex(fileBytes),
+      fileSha256Hex: inspection.fileSha256Hex,
       payload: payload,
       payloadVersion: version,
       fileName: fileName,
