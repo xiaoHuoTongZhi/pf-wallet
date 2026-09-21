@@ -188,6 +188,52 @@ quick-check-damaged      孤儿扫描= 0  注入的孤儿={}
 
 「注入的孤儿」列只有一行非空 —— 这一行就是上表第三行「无独立证据」的全部含义。
 
+## 未来约束：A 的样本 id 不是合法 ULID（**有意为之**）
+
+**事实**：`fixtures/import_samples.json` 的 5 个样本共 26 条记录行（含跨样本重复），
+其中 **19 处 `id` 不是合法 ULID**（去重后 8 个不同 id）；而 `deviceId` **26/26 全部合法**。
+不合法分三类（2026-09-21 实测）：
+
+| 原因 | 处数 | 样例 | 说明 |
+| --- | --- | --- | --- |
+| 长度 27 | 11 | `01J8TESTLEDGER0000000000001` | `01J8TEST` + 6 字母业务前缀（LEDGER / ACCNT…）+ 13 位序号 |
+| 长度 25 | 7 | `01J8TESTTXN00000000000003` | 3 字母业务前缀（TXN） |
+| 含表外字符 `U` | 1 | budget 行 | 前缀用了 `BUDGET` 字样，而 Crockford 表排除 `I/L/O/U` |
+
+**为什么现在无害**：A（`import_payload.dart` / `import_apply.dart`）**不校验 id 格式** ——
+id 只作为主键字符串透传。所以 A 的 44 条 import 向量全绿。
+
+**为什么是有意的**：这些 id 是写给人看的可读样本（一眼能认出哪条是账户、哪条是交易）。
+把它们改成合法 ULID 属于**实现倒逼向量** —— 让向量去迁就实现的新约束，
+而不是让向量忠实反映规格行为。这是本目录的一条红线（见「为什么用数据锁定行为」）。
+
+**未来约束（本节存在的真正目的）**：如果将来有人在 **A 的路径上**加 id 格式校验
+（哪怕只是一句 `assert(Ulid.isValid(row.id))`），**A 的 44 条 import 向量会立刻全红**。
+届时的正确做法**不是**删掉那条校验，也**不是**只手改 fixtures —— 而是**重算**：
+重造样本字节（fixtures 的 hex）→ 重跑生成器 → `test_vectors/v1/import_payload.json`
+全量重生成，判决摘要一并换成新值。这是一次跨文件联动改动，不是改一行。
+
+**判据**：`import.triage.*` / `import.payload.decode.*` / `import.file.read.*` / `import.apply.*`
+四组（共 44 条）里任一条突然变红且报错指向 id 格式，先回看本节再动手。
+
+**自查（不跑 Dart，几秒出结论；若你的 shell 不支持 heredoc，把中间那段存成 `.py` 再跑）**：
+
+```bash
+cd D:/workbuddy/pf-wallet
+python - <<'PY'
+import json, pathlib
+CROCK, FIRST = set("0123456789ABCDEFGHJKMNPQRSTVWXYZ"), "01234567"
+bad = lambda s: (not isinstance(s, str)) or len(s) != 26 or any(c not in CROCK for c in s) or s[0] not in FIRST
+fx = json.loads(pathlib.Path("test_vectors/fixtures/import_samples.json").read_text(encoding="utf-8"))
+rows = [o for s in fx["samples"] if s.get("payloadNdjsonHex")
+          for o in (json.loads(l) for l in bytes.fromhex(s["payloadNdjsonHex"]).decode("utf-8").split("\n") if l.strip())
+          if isinstance(o, dict) and "id" in o]
+print("记录行 %d  id 非法 %d（去重 %d）  deviceId 非法 %d"
+      % (len(rows), sum(bad(o["id"]) for o in rows),
+         len({o["id"] for o in rows if bad(o["id"])}), sum(bad(o.get("deviceId")) for o in rows)))
+PY
+```
+
 ## 怎么跑
 
 ```bash
