@@ -412,6 +412,11 @@ M0 首推的实测结果印证了这个分层：关卡 1 一次绿、关卡 3 �
 反过来说，**不要**用「文档提交不会跑 CI」当作省略本地自检的理由 ——
 `dart format --set-exit-if-changed` 与 `dart analyze` 在本机是秒级的，仍然照跑。
 
+**本机实测（2026-09-21）**：提交 `ff785ad` 只改了 `docs/M0_CI_RUNBOOK.md` 与
+`test_vectors/README.md` —— 后者**不在 `docs/**` 下**，靠 `**.md` 命中。
+推送后按完整 sha 查运行数是 **0**（三个 workflow 一个 run 都没有）。
+所以「`**.md` 匹配任意层级」这条不是推测，连 `test_vectors/` 下的 README 也算数。
+
 **一个已知的未来坑**：过滤器同时作用在 `pull_request` 上。若日后开了分支保护
 并把三关卡设为**必需检查**，纯文档 PR 会因为「没有检查项」而永远等不到
 required check 通过。届时把 `pull_request` 段下的 `paths-ignore` 删掉即可
@@ -485,9 +490,14 @@ SHA=$(git rev-parse <中间提交>)          # 需要完整 40 位
 # ① 为它建一个临时分支（dispatch 的 ref 只接受分支/标签名，**给裸 SHA 会 422**）
 & 'C:\Program Files\Git\bin\bash.exe' -lc "cd /d/workbuddy/pf-wallet && git push origin $SHA:refs/heads/ci-<短sha>"
 
-# ② 三个关卡各补一次（token 用 git credential fill 取，注意在**系统 Git bash** 里取：
-#    PortableGit 自带的 bash 里 credential helper 没有终端，会挂死）
-TOKEN=$(cat /tmp/pf_token.txt)
+# ② 取 token（本机没装 gh CLI）。必须在**系统 Git** 的 bash 里取 ——
+#    PortableGit 自带的 bash 里 credential helper 没有终端，会挂死。
+printf 'protocol=https\nhost=github.com\n\n' | git credential fill > D:/workbuddy/_pftok.out
+# 产物是 protocol / host / username / password 四行，取 password= 那一行。
+# ⚠️ 里面是凭据：用完删掉它，不要入库、不要留在 TEMP 里过夜。
+
+# ③ 三个关卡各补一次（只补需要的那一个也行）
+TOKEN=$(sed -n 's/^password=//p' D:/workbuddy/_pftok.out)
 for wf in gate1-static.yml gate2-test.yml gate3-vectors.yml; do
   curl -s -o /dev/null -w "$wf -> %{http_code}\n" -X POST \
     -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
@@ -495,8 +505,9 @@ for wf in gate1-static.yml gate2-test.yml gate3-vectors.yml; do
     -d '{"ref":"ci-<短sha>"}'
 done                                  # 期望三个 204
 
-# ③ 跑完（gate3 是三平台矩阵，约 3~5 分钟）后删掉临时分支
+# ④ 跑完（gate3 是三平台矩阵，约 3~5 分钟）后删掉临时分支
 & 'C:\Program Files\Git\bin\bash.exe' -lc "cd /d/workbuddy/pf-wallet && git push origin --delete ci-<短sha>"
+rm -f D:/workbuddy/_pftok.out         # 凭据不要留着
 ```
 
 取证口径：`workflow_dispatch` 产生的 run，其 `event` 字段是 `workflow_dispatch`
@@ -698,6 +709,43 @@ can't open file 'D:\\d\\workbuddy\\_pfdispatch.py': [Errno 2] No such file or di
 
 本次 `651932d` 的 gate3 证据就是这么取的：临时分支 + dispatch，
 **主力工作区从头到尾没有被碰过**。
+
+### 1.10 推送后盯的五项（附 `9b897af` 的实测值，可直接对照）
+
+推送后不要只看「有没有红点」—— 门禁的价值有几处**只有细看才看得见**。
+下面五项是每次推送后固定要看的，括号里是提交 `9b897af`（导入器提交 A）的实测值。
+
+| # | 盯什么 | 期望 |
+|---|---|---|
+| 1 | gate1 的覆盖检查步骤 | 末尾一行 `✓ 覆盖检查：40 个驱动全部有向量引用`（本机与 CI 同款脚本） |
+| 2 | gate1 的 artifact `vectors-coverage-report-<sha>` | 解出 `coverage.json`：`ok: true`、`totals.drivers = 40`、`coveredDrivers = 40`、`uncoveredDrivers = 0`，且 `uncoveredKinds` / `orphanKinds` / `orphans` 都是**空数组** |
+| 3 | gate3 三平台 `report.json` 的 `verdictDigest` | 三份**逐字符相同**；一致性作业打印 `✓ 3 个平台的判定完全一致（<摘要前 16 位>…）` |
+| 4 | gate3 每平台的 `report.json` 的 `totals` | `total 199 / passed 199 / failed 0 / pending 0` |
+| 5 | gate2 三平台 | 全绿；每平台 8 包的 `🎉 N tests passed.` 逐包相同，库包合计 **430**（91+152+78+38+71） |
+
+第 3 项是关卡 3 存在的**全部**理由：**三个平台彼此相同**比任何单平台的数字都重要。
+
+第 5 项里的「库包合计」不含 `pf_guards`（算在它自己的门禁里）与
+`pf_ui` / `pf_mobile`（算在关卡 2 的 widget 作业里）。另外
+**workflow 里没有硬编条数断言** —— 数字变了不会失红，这一项只能靠人看。
+
+三样东西各自在哪、怎么读：
+
+| 要看的东西 | 在哪 | 怎么读 |
+|---|---|---|
+| 覆盖检查明细 | gate1 的 `vectors-coverage-report-<sha>.zip` | 解出 `coverage.json` |
+| 三平台判定 | gate3 的 `vectors-report-<os>-<sha>.zip` | 解出 `report.json`，看 `totals` 与 `verdictDigest` |
+| 三平台测试计数 | gate2 的**作业日志** | `grep 'tests passed'`（artifact 里只有 lcov 覆盖率，没有计数） |
+
+**artifact 比作业日志好取**：日志与 artifact 的下载都走 302 跳到 CDN 签名 URL，
+跟着重定向再带 `Authorization` 会被拒（HTTP 401）—— 取法与绕法见 §1.8。
+反过来说，只有「测试计数」这一项必须读日志，其余四项都在 artifact 里。
+
+`9b897af` 的三份 `verdictDigest` 逐字符相同：
+
+```
+4ae3ee26ea8277979ee7462ad46d41eead24cae71484bad81e27ae913cd6c85d
+```
 
 ---
 
