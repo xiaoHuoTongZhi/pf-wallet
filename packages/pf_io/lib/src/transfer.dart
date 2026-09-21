@@ -153,7 +153,40 @@ final class ExportResult {
   final bool verifiedByReadBack;
 }
 
+/// 冲突种类 —— 与 §2.3 `conflict.kind` 的 `1/2/3` **逐值对应**。
+///
+/// 刻意做成带数值的枚举而不是裸 int：这个值会被写进库里并且**将来要按它
+/// 分组给用户看**（「3 处内容冲突」「1 处删除冲突」「2 处引用缺失」是完全
+/// 不同的三件事，用户能做的动作也不同）。裸 int 会让「谁记得 2 是哪一个」
+/// 成为唯一的规格来源。
+enum ConflictKind {
+  /// 同一条记录两端都改成了不同内容（含时间差落在宽限窗口内的模糊情况）。
+  content(1),
+
+  /// 一边删除、一边编辑。
+  deleteVsEdit(2),
+
+  /// 引用的父实体在本地不存在（§4.4 S11/S12）。
+  referenceMissing(3);
+
+  const ConflictKind(this.value);
+
+  /// `conflict.kind` 的取值。
+  final int value;
+}
+
 /// 一条需要用户复核的冲突。
+///
+/// ## 它同时承载「分歧」与「已经取了哪一侧」
+///
+/// 本项目的冲突**不是**「暂停等用户选」—— 多设备离线场景下那样做无法收敛
+/// （两台各选一个，下次同步又冲突）。因此裁决永远是确定性的：
+/// 先按版本戳定出一个取值（[autoResolvedSide]），**同时**把这次分歧记下来
+/// 供用户复核。用户改不改都不影响收敛性，改了就产生一个更新的版本戳。
+///
+/// [kind] 决定用户在冲突面板里看到什么；
+/// [autoResolvedSide] 是「数据库里现在到底是哪一份」——
+/// 缺了它，UI 就只能说「这里有冲突」，而说不出「你先在用的是哪一份」。
 final class ImportConflict {
   const ImportConflict({
     required this.entityKind,
@@ -161,6 +194,8 @@ final class ImportConflict {
     required this.local,
     required this.remote,
     required this.decision,
+    required this.kind,
+    this.autoResolvedSide = MergeSide.none,
   });
 
   /// 实体种类名（如 `transaction` / `account`）。
@@ -177,8 +212,19 @@ final class ImportConflict {
   /// 裁决结果。
   final MergeDecision decision;
 
+  /// 冲突种类（`conflict.kind`）。
+  final ConflictKind kind;
+
+  /// 确定性收敛的结果落在哪一侧（`none` 表示双方取值本就无需改动）。
+  final MergeSide autoResolvedSide;
+
+  /// 是否已经自动取了一个值（即用户不复核也不会「什么都没有」）。
+  bool get isAutoResolved => autoResolvedSide != MergeSide.none;
+
   @override
-  String toString() => 'ImportConflict($entityKind/$recordId, ${decision.reason.wireName})';
+  String toString() =>
+      'ImportConflict($entityKind/$recordId, kind=${kind.value}, '
+      'resolvedBy=${autoResolvedSide.wireName}, ${decision.reason.wireName})';
 }
 
 /// 导入报告。
@@ -192,6 +238,7 @@ final class ImportReport {
     required this.conflicts,
     required this.rolledBack,
     this.rollbackBackupPath,
+    this.removedCandidates = const <String>[],
   });
 
   final ImportMode mode;
@@ -208,6 +255,21 @@ final class ImportReport {
 
   /// 导入前自动备份的路径（回滚依据）。
   final String? rollbackBackupPath;
+
+  /// 覆盖模式下「文件里没有、将被软删」的本地记录 id（§4.4 plan 阶段）。
+  ///
+  /// **这不是「已删除」而是「将被删除」**：§4.4 的护栏要求先把这份清单摊给
+  /// 用户看、并用条数做二次输入确认，用户确认后才真的软删。
+  /// 因此它必须能独立于 `deleted` 计数被呈现 —— 合成一个数字，
+  /// 用户就没法知道「将删除 M 条」里的 M 到底是几。
+  final List<String> removedCandidates;
+
+  /// 是否必须先让用户用条数确认（§4.4 覆盖模式护栏第 1–2 条）。
+  ///
+  /// 刻意做成**派生值**而不是构造参数：一旦它能被独立设置，
+  /// 「报告说无需确认」与「待删清单非空」就会同时成立，
+  /// 而这份报告的全部意义就是让用户在大面积软删之前被拦住。
+  bool get requiresCountConfirmation => mode == ImportMode.replace && removedCandidates.isNotEmpty;
 
   int get totalTouched => inserted + updated + deleted;
 }

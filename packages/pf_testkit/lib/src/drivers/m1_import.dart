@@ -30,6 +30,15 @@ import '../fakes/scripted_db.dart';
 import '../json_util.dart';
 import '../outcome.dart';
 
+/// `import.apply` 向量没传 `localDeviceId` 时的缺省本机身份。
+///
+/// 取值就是样本载荷自己的 `deviceId`（`fixtures/import_samples.json`）——
+/// 不是随手编的字符串：A 的九条向量的输入**早于**这个字段存在，
+/// 而它们跑的是「合并 + 中止」路径，执行器在这条路径上根本不会读本机身份
+/// （不造占位实体、不软删）。给一个真实存在的 ULID 而不是 `''`，
+/// 是为了让「有人误在 converge 路径上漏传它」时至少落到一个合法值上。
+const String _defaultLocalDeviceId = '01J8Z9K2M4P6Q8R0T2V4X6Z8B1';
+
 /// 把任意驱动输出变成可 JSON 化的值（字节 → `{hex}`）。
 ///
 /// 为什么需要它：载荷里的附件列是 `Uint8List`，`jsonEquals` 认不出它，
@@ -235,6 +244,11 @@ final class ImportApplyDriver extends VectorDriver {
     // `(^|_)(now|random|seed|uuid|time)$`）。这里传的本来就是**显式固定的**时钟，
     // 取名要让门禁和读者都一眼看出这一点，而不是去放宽那条规则。
     'nowMillis': '显式时钟（epoch 毫秒）',
+    // 本机 deviceId。合并/仅补充模式下执行器不会用它（不造占位、不软删），
+    // 因此缺省值只是让 A 的九条向量一字不改地继续成立；
+    // 覆盖模式与 `converge` 策略下它是**必需**的 —— 那时缺了它，
+    // 占位实体的 `device_id` 就会是空串。
+    'localDeviceId': '本机 deviceId（占位实体与覆盖软删要写它）',
     'ndjsonHex': '明文载荷十六进制',
     'localRows': '{表名: [本地行]}，作为 SELECT 的罐头结果',
     'importedFile': 'imported_file 的罐头结果（非空即触发幂等短路）',
@@ -266,6 +280,7 @@ final class ImportApplyDriver extends VectorDriver {
           fileSha256Hex: requireString(input, 'fileSha256', kind),
           payload: payload,
           nowMilliseconds: requireInt(input, 'nowMillis', kind),
+          localDeviceId: optionalString(input, 'localDeviceId', _defaultLocalDeviceId),
         ),
         backup: gateway,
       );

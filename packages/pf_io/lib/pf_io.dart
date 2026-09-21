@@ -10,6 +10,8 @@ export 'src/export_payload.dart';
 export 'src/exporter.dart';
 export 'src/import_apply.dart';
 export 'src/import_file.dart';
+export 'src/import_merge.dart';
 export 'src/import_payload.dart';
+export 'src/import_reference_fix.dart';
 export 'src/record_version.dart';
 export 'src/transfer.dart';

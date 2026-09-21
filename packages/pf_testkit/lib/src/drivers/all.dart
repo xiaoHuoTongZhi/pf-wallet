@@ -16,6 +16,7 @@ import 'm1_container.dart';
 import 'm1_export.dart';
 import 'm1_hkdf.dart';
 import 'm1_import.dart';
+import 'm1_import_conflict.dart';
 import 'm2_crypto.dart';
 import 'm2_db.dart';
 import 'm2_keyring.dart';
@@ -68,6 +69,11 @@ List<VectorDriver> defaultVectorDrivers() => const <VectorDriver>[
   ImportPayloadDecodeDriver(),
   ImportFileReadDriver(),
   ImportApplyDriver(),
+  // ---- M1 导入器（提交 B / §4.4）：裁决、计划、收敛性、引用修复 ----
+  MergeRecordDriver(),
+  MergePlanDriver(),
+  MergeConvergeDriver(),
+  MergeReferenceDriver(),
 ];
 
 /// 标准注册表。

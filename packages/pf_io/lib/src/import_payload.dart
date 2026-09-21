@@ -587,6 +587,85 @@ final Map<String, PayloadRecordSpec> kPayloadRecordSpecs = <String, PayloadRecor
   ),
 };
 
+/// 引用完整性规则：子表某列必须指向父表的既有行。
+///
+/// **这张表只有一个定义处**（2026-09-21 提交 B 提取）：孤儿扫描
+/// （`import_apply.dart` 的 `ImportIntegrityCheck`）与引用修复
+/// （`import_reference_fix.dart`）用的是同一张表。
+///
+/// 提取的理由不是「少写几行」：两张表一旦并存，就会出现
+/// 「扫描认得这条引用、修复不认得」的组合 —— 而那时的表现是
+/// **导入整体回滚**（扫描发现没修好的悬空）。这种失败看起来像数据坏了，
+/// 实际是两张表不一致，排查方向会被彻底带偏。
+final class PayloadReferenceRule {
+  const PayloadReferenceRule({required this.child, required this.column, required this.parent});
+
+  /// 子表（引用方）。
+  final String child;
+
+  /// 子表的引用列。
+  final String column;
+
+  /// 父表（被引用方）。
+  final String parent;
+
+  /// 面向排查的名字：`txn.account_id→account`。
+  String get name => '$child.$column→$parent';
+
+  /// 面向向量输入的键（纯 ASCII）：`txn.account_id`。
+  ///
+  /// 单独给一个键而不是复用 [name]：向量文件是给人看也会被别的实现读的，
+  /// 让它的键里出现 `→` 只会平添编码争议（`name` 用于日志与错误详情）。
+  String get key => '$child.$column';
+
+  /// 孤儿扫描。**常量 SQL**（表名/列名都是本仓字面量），不带参数。
+  ///
+  /// `NOT IN` 遇 NULL 得 NULL、行被过滤 —— 这正是想要的：
+  /// 可空引用列取 NULL 表示「没有引用」，不是「引用了不存在的行」。
+  String get orphanScanSql =>
+      'SELECT COUNT(*) AS n FROM $child WHERE $column NOT IN (SELECT id FROM $parent)';
+}
+
+/// §2.3 的全部外键引用。顺序即扫描顺序（可复现）。
+const List<PayloadReferenceRule> kPayloadReferenceRules = <PayloadReferenceRule>[
+  PayloadReferenceRule(child: 'account', column: 'ledger_id', parent: 'ledger'),
+  PayloadReferenceRule(child: 'account', column: 'repay_account_id', parent: 'account'),
+  PayloadReferenceRule(child: 'category', column: 'ledger_id', parent: 'ledger'),
+  PayloadReferenceRule(child: 'category', column: 'parent_id', parent: 'category'),
+  PayloadReferenceRule(child: 'tag', column: 'ledger_id', parent: 'ledger'),
+  PayloadReferenceRule(child: 'txn', column: 'ledger_id', parent: 'ledger'),
+  PayloadReferenceRule(child: 'txn', column: 'account_id', parent: 'account'),
+  PayloadReferenceRule(child: 'txn', column: 'to_account_id', parent: 'account'),
+  PayloadReferenceRule(child: 'txn', column: 'category_id', parent: 'category'),
+  PayloadReferenceRule(child: 'budget', column: 'ledger_id', parent: 'ledger'),
+  PayloadReferenceRule(child: 'budget', column: 'category_id', parent: 'category'),
+  PayloadReferenceRule(child: 'attachment', column: 'ledger_id', parent: 'ledger'),
+  PayloadReferenceRule(child: 'attachment', column: 'txn_id', parent: 'txn'),
+];
+
+/// 由 `(updatedAt, deviceId)` 合成版本戳 —— §4.4 实现口径注记的公式原文。
+///
+/// 同一 `(updatedAt, deviceId)` 恒等产出同一戳，因此它可进黄金向量。
+/// **前置条件**：`updatedAtMs` 落在 ULID 的 48 位毫秒域内（`0 .. 2^48-1`）。
+/// 域外的值（时钟回拨产生的负数、被篡改的超大值）由调用方先归一 ——
+/// 见 [normalizeUpdatedAtMilliseconds]。
+///
+/// 放在本文件（而不是 `import_merge.dart`）的理由很实在：它是
+/// [ImportRecord] 的一个**派生属性**（见 `ImportRecord.versionStamp`），
+/// 而记录的定义在这里。放远了会形成 `import_payload` ↔ `import_merge`
+/// 的循环导入 —— Dart 允许循环，但那意味着两个文件都无法被单独读懂。
+String synthesizeVersionStamp(int updatedAtMs, String deviceId) =>
+    UlidGenerator.encode(updatedAtMs, Sha256.instance.hash(utf8.encode(deviceId)).sublist(0, 10));
+
+/// `updated_at < 1` 归一到 0（§4.4 S25「视为最旧处理」）。
+///
+/// 为什么归一而不是丢弃该行：一条 `updated_at` 为 0 或负数的记录**确实是用户的
+/// 数据**（可能来自时钟从未校准过的设备）。把它当最旧的那一条参与裁决，它就会
+/// 在任何一个有意义的版本面前输掉 —— 这正是「视为最旧」该有的效果。
+/// 而如果让它直接进合成公式，负数会让 `UlidGenerator.encode` 抛错：
+/// 一条坏时间戳的记录就能炸掉整次导入。
+int normalizeUpdatedAtMilliseconds(int raw) => raw < 1 ? 0 : raw;
+
 /// 一条已解码、已校验、可直接参数化写入的记录。
 final class ImportRecord {
   const ImportRecord({
@@ -629,13 +708,20 @@ final class ImportRecord {
   /// 从而把「重复导入」识别成 skip 而不是 update。
   String get contentFingerprint => contentFingerprintOf(columns);
 
+  /// 版本戳（§4.4 实现口径）：由 [updatedAt] 与 [deviceId] 合成。
+  ///
+  /// 不做缓存：它是一次哈希 + 一次 Base32 编码，而导入是批处理路径 ——
+  /// 为它加一个字段只会让 [ImportRecord] 多一个可能与 [columns] 不一致的状态。
+  String get versionStamp =>
+      synthesizeVersionStamp(normalizeUpdatedAtMilliseconds(updatedAt), deviceId);
+
   @override
   String toString() => 'ImportRecord($type/$id)';
 
   /// 与 [contentFingerprint] 同口径的独立函数（写入器对比本地行时也用它）。
   static String contentFingerprintOf(Map<String, Object?> columns) {
     final keys =
-        columns.keys.where((String key) => !_fingerprintExcluded.contains(key)).toList()..sort();
+        columns.keys.where((String key) => !fingerprintExcluded.contains(key)).toList()..sort();
     final canonical = <String, Object?>{for (final key in keys) key: columns[key]};
     return Sha256.instance.hashHex(utf8.encode(jsonEncode(canonical)));
   }
@@ -651,13 +737,13 @@ final class ImportRecord {
   /// `device_id` 在两台设备上天然不同，它们**不构成内容差异**。
   bool matchesLocal(Map<String, Object?> local) {
     final keys =
-        columns.keys.where((String key) => !_fingerprintExcluded.contains(key)).toList()..sort();
+        columns.keys.where((String key) => !fingerprintExcluded.contains(key)).toList()..sort();
     final incoming = <String, Object?>{for (final key in keys) key: columns[key]};
     final existing = <String, Object?>{for (final key in keys) key: local[key]};
     return contentFingerprintOf(incoming) == contentFingerprintOf(existing);
   }
 
-  static const Set<String> _fingerprintExcluded = <String>{
+  static const Set<String> fingerprintExcluded = <String>{
     'rev',
     'updated_at',
     'created_at',

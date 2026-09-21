@@ -1,0 +1,5356 @@
+{
+  "schemaVersion": 1,
+  "suite": "import_conflict",
+  "title": "导入器 B：裁决 / 计划 / 收敛性 / 引用修复（§4.4）",
+  "description": "四个 kind 对应 §4.4 冲突处置的四层可独立判定的性质：单条记录怎么裁决（七态）、一批记录怎么落库（语句序 / 计数 / 待软删 / 冲突登记）、同一批记录换个顺序或拆两次导入结果是否一致（可交换 / 幂等 / 可结合）、以及引用指向缺失时怎么补。期望值由 tools/golden_vectors_gen/import_conflict.py 按 §4.4 独立实现算出（Python 侧零共享 Dart 代码），脚本开头把 ULID 编码与 JSON 口径对齐到已发布的 ulid.json —— 那两条是锚点，不是主张。",
+  "cases": [
+    {
+      "id": "import.merge.record.local-missing-insert",
+      "kind": "import.merge.record",
+      "title": "本地没有这条 id ⇒ insert（新数据一律进得来）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452000000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452000000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": null,
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "insert",
+          "rule": "local_missing",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452000000,
+              "01M2HTD6R0X5308AXGAKPFVAJC"
+            ],
+            "replace": false
+          },
+          "localVersionStamp": null,
+          "remoteVersionStamp": null
+        }
+      },
+      "notes": "「中止」策略拦的是**改动本地已有行**，不是新增。把新增也拦下，等于让用户在「先导入一次新账本」这一步就卡住 —— 而这一步没有任何东西可被破坏。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.local-missing-tombstone",
+      "kind": "import.merge.record",
+      "title": "本地没有、文件带来墓碑 ⇒ insertTombstone（把删除也写下来）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "deleted_at": 1789452600000,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": null,
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "insert_tombstone",
+          "rule": "local_missing_tombstone",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, deleted_at, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452600000,
+              1789452600000,
+              "01M2HTD6R0X5308AXGAKPFVAJC"
+            ],
+            "replace": false
+          },
+          "localVersionStamp": null,
+          "remoteVersionStamp": null
+        }
+      },
+      "notes": "只跳过墓碑而不记录它，会让「已删除」这件事在下次导入时被复活：文件里那条记录在别的设备上还是活的，本机什么都没记，下一份文件一进来就又插回去了。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.identical-content-skip",
+      "kind": "import.merge.record",
+      "title": "业务列逐字相同、只有版本元数据不同 ⇒ skip（幂等就落在这里）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "招行储蓄卡",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "skip",
+          "rule": "identical_content",
+          "side": "none",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": null,
+          "localVersionStamp": null,
+          "remoteVersionStamp": null
+        }
+      },
+      "notes": "若先比版本戳，「同一份备份导入两次」会变成一次 update —— 无后端同步里最危险的一类假动作：数据没变，但每导入一次就产生一批新版本戳，永不收敛。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.remote-newer-update",
+      "kind": "import.merge.record",
+      "title": "双方都活、远端更新且差超过 60s ⇒ update / remote_newer",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "update",
+          "rule": "remote_newer",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452600000,
+              "01M2HTD6R0X5308AXGAKPFVAJC",
+              "01M2HTD6R0ZGSYPK2A08KG45A3"
+            ],
+            "replace": true
+          },
+          "localVersionStamp": "01M2HTD6R0F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTZGP0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "最普通的一路。它同时是「宽限窗口」的对照面：只有差得足够远，才敢说谁更新。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.local-newer-skip",
+      "kind": "import.merge.record",
+      "title": "双方都活、本地更新 ⇒ skip / local_newer（保本地）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452000000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452000000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452600000,
+          "updated_at": 1789452600000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "skip",
+          "rule": "local_newer",
+          "side": "local",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": null,
+          "localVersionStamp": "01M2HTZGP0F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTD6R0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "反向的那一半。没有它，「总取远端」也能让上面那条用例全绿。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.skew-window-conflict",
+      "kind": "import.merge.record",
+      "title": "差 30 秒且内容不同 ⇒ conflict / ambiguous_window（取值仍确定：远端胜）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452030000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452030000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "conflict",
+          "rule": "ambiguous_window",
+          "side": "remote",
+          "conflictKind": 1,
+          "needsUserReview": true,
+          "write": {
+            "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452030000,
+              "01M2HTD6R0X5308AXGAKPFVAJC",
+              "01M2HTD6R0ZGSYPK2A08KG45A3"
+            ],
+            "replace": true
+          },
+          "localVersionStamp": "01M2HTD6R0F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTE41GZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "两台设备的时钟差几秒完全正常，此时「谁更新」没有语义上的强弱。若静默 LWW，用户会看到自己的修改被另一台设备上更早的修改覆盖，且没有任何提示。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "import.merge.record.stamp-collision-conflict",
+      "kind": "import.merge.record",
+      "title": "版本戳相同、内容不同 ⇒ conflict / stamp_collision",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452000000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452000000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "conflict",
+          "rule": "stamp_collision",
+          "side": "remote",
+          "conflictKind": 1,
+          "needsUserReview": true,
+          "write": {
+            "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452000000,
+              "01M2HTD6R0X5308AXGAKPFVAJC",
+              "01M2HTD6R0ZGSYPK2A08KG45A3"
+            ],
+            "replace": true
+          },
+          "localVersionStamp": "01M2HTD6R0ZQ6Y1D158RW1VJYN",
+          "remoteVersionStamp": "01M2HTD6R0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "正常流程不可能产生（同设备同毫秒的两次写入会单调递增）。出现即说明版本戳生成被破坏或数据被外部改过；悄悄选一个会让这类损坏永久隐身。",
+      "tags": [
+        "convergence",
+        "security"
+      ]
+    },
+    {
+      "id": "import.merge.record.tombstone-wins-mark-deleted",
+      "kind": "import.merge.record",
+      "title": "远端墓碑更新、本地是活着的编辑 ⇒ markDeleted / tombstone_wins",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "deleted_at": 1789452600000,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "mark_deleted",
+          "rule": "tombstone_wins",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, deleted_at = ?, updated_at = ?, device_id = ? WHERE id = ?",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452600000,
+              1789452600000,
+              "01M2HTD6R0X5308AXGAKPFVAJC",
+              "01M2HTD6R0ZGSYPK2A08KG45A3"
+            ],
+            "replace": true
+          },
+          "localVersionStamp": "01M2HTD6R0F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTZGP0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "删除在别处发生过，就必须在本机生效。若让「本地还活着」赢，用户会看到一条自己在另一台设备上已经删掉的记录又冒出来。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.stale-edit-loses-to-tombstone",
+      "kind": "import.merge.record",
+      "title": "本地墓碑更新、远端是更早的编辑 ⇒ skip / tombstone_wins（迟到的编辑不得复活）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452000000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452000000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452600000,
+          "updated_at": 1789452600000,
+          "deleted_at": 1789452600000,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "skip",
+          "rule": "tombstone_wins",
+          "side": "local",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": null,
+          "localVersionStamp": "01M2HTZGP0F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTD6R0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "这是「绝不静默复活」的第一半：编辑比墓碑更早 ⇒ 墓碑胜，且连待复核都不记（删掉就是删掉了，没有什么要用户确认的）。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.late-edit-conflict",
+      "kind": "import.merge.record",
+      "title": "本地墓碑较早、远端编辑较晚 ⇒ conflict / delete_vs_edit（取值取编辑，但必须复核）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": 1789452000000,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "conflict",
+          "rule": "delete_vs_edit",
+          "side": "remote",
+          "conflictKind": 2,
+          "needsUserReview": true,
+          "write": {
+            "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452600000,
+              "01M2HTD6R0X5308AXGAKPFVAJC",
+              "01M2HTD6R0ZGSYPK2A08KG45A3"
+            ],
+            "replace": true
+          },
+          "localVersionStamp": "01M2HTD6R0F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTZGP0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "「绝不静默复活」的第二半：复活可以发生，但不能悄无声息。取值仍按版本戳确定（编辑晚），因此收敛性不受影响 —— 有影响的是「打不打扰用户」。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "import.merge.record.late-edit-resurrect-lww",
+      "kind": "import.merge.record",
+      "title": "同一分歧改用 editWinsByLww ⇒ resurrect（且不记复核）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": 1789452000000,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "edit_wins_by_lww",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "resurrect",
+          "rule": "delete_vs_edit_lww",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452600000,
+              "01M2HTD6R0X5308AXGAKPFVAJC",
+              "01M2HTD6R0ZGSYPK2A08KG45A3"
+            ],
+            "replace": true
+          },
+          "localVersionStamp": "01M2HTD6R0F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTZGP0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "§4.4 策略表的另一行。它是七态里 `resurrect` 唯一的出口 —— 默认策略下它不可达，这条用例就是那个「不可达」的反证。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.zero-timestamp-normalized",
+      "kind": "import.merge.record",
+      "title": "本地 updated_at 为负数（时钟从未校准）⇒ 归一为最旧，远端胜出",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452000000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452000000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": -5,
+          "updated_at": -5,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "update",
+          "rule": "remote_newer",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452000000,
+              "01M2HTD6R0X5308AXGAKPFVAJC",
+              "01M2HTD6R0ZGSYPK2A08KG45A3"
+            ],
+            "replace": true
+          },
+          "localVersionStamp": "0000000000F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTD6R0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "坏时间戳必须被归一而不是被丢弃，也不能直接进合成公式（负数会让 ULID 编码抛错 ——一条坏记录就能炸掉整次导入）。归一之后它作为「最旧的那一条」参与裁决。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "import.merge.record.abort-insert-passes",
+      "kind": "import.merge.record",
+      "title": "abort 策略 + 本地没有这条 id ⇒ 照样 insert",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452000000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452000000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": null,
+        "mode": "merge",
+        "strategy": "abort",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "insert",
+          "rule": "local_missing",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452000000,
+              "01M2HTD6R0X5308AXGAKPFVAJC"
+            ],
+            "replace": false
+          },
+          "localVersionStamp": null,
+          "remoteVersionStamp": null
+        }
+      },
+      "notes": "「中止」不是「什么都不做」，而是「不改动已有数据」。把新增一起拦掉会让首次导入（空库）无法完成 —— 那是本策略最容易被误伤的场景。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.abort-content-divergence",
+      "kind": "import.merge.record",
+      "title": "abort 策略 + 同 id 内容不同 ⇒ conflict / abort_on_divergence（且不写）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "abort",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "conflict",
+          "rule": "abort_on_divergence",
+          "side": "none",
+          "conflictKind": 1,
+          "needsUserReview": true,
+          "write": null,
+          "localVersionStamp": "01M2HTD6R0F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTZGP0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "这是提交 A 的全部行为，也是本引擎的缺省：没人显式要求裁决之前，引擎不擅自改用户已有的数据。它同时被 A 的 `import.apply.conflict-deferred` 在编排层锁死。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.abort-delete-vs-edit",
+      "kind": "import.merge.record",
+      "title": "abort 策略 + 一边删除一边编辑 ⇒ conflict，且 kind 记 2",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "deleted_at": 1789452600000,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "abort",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "conflict",
+          "rule": "abort_on_divergence",
+          "side": "none",
+          "conflictKind": 2,
+          "needsUserReview": true,
+          "write": null,
+          "localVersionStamp": "01M2HTD6R0F5VEVHN2G4C010FG",
+          "remoteVersionStamp": "01M2HTZGP0ZQ6Y1D158RW1VJYN"
+        }
+      },
+      "notes": "冲突的种类决定用户在面板里看到什么、能做什么（「保留我改的」vs「按删除处理」）。把两种冲突记成同一种，用户就没有可依据的动作。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "import.merge.record.abort-identical-skip",
+      "kind": "import.merge.record",
+      "title": "abort 策略 + 内容相同 ⇒ skip（中止策略也要先认幂等）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "招行储蓄卡",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "merge",
+        "strategy": "abort",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "skip",
+          "rule": "identical_content",
+          "side": "none",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": null,
+          "localVersionStamp": null,
+          "remoteVersionStamp": null
+        }
+      },
+      "notes": "若 ``abort`` 只看「本地已存在」就中止，重复导入同一份备份会次次报冲突 ——而用户重试导入正是最常见的操作。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.replace-existing-update",
+      "kind": "import.merge.record",
+      "title": "replace 模式 + 本地已存在 ⇒ update / overwrite_by_file（不做版本比较）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452000000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452000000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452600000,
+          "updated_at": 1789452600000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "replace",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "update",
+          "rule": "overwrite_by_file",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452000000,
+              "01M2HTD6R0X5308AXGAKPFVAJC",
+              "01M2HTD6R0ZGSYPK2A08KG45A3"
+            ],
+            "replace": true
+          },
+          "localVersionStamp": null,
+          "remoteVersionStamp": null
+        }
+      },
+      "notes": "覆盖模式的语义是「以文件为准」，因此它**刻意不比版本**：用户说的就是要这一份。一旦这里插入版本比较，覆盖模式就会在「文件更旧」时悄悄变成合并。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.replace-missing-tombstone-reinsert",
+      "kind": "import.merge.record",
+      "title": "replace 模式 + 本地没有、文件是墓碑 ⇒ insertTombstone",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "deleted_at": 1789452600000,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": null,
+        "mode": "replace",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "insert_tombstone",
+          "rule": "overwrite_tombstone",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, deleted_at, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452600000,
+              1789452600000,
+              "01M2HTD6R0X5308AXGAKPFVAJC"
+            ],
+            "replace": false
+          },
+          "localVersionStamp": null,
+          "remoteVersionStamp": null
+        }
+      },
+      "notes": "覆盖模式同样要记录墓碑：否则「文件里已删除、本机从没见过的记录」会在下一次同步时以活着的形态回来。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.supplement-existing-skip",
+      "kind": "import.merge.record",
+      "title": "supplement_only + 本地已存在 ⇒ skip（绝不修改已有记录，含墓碑）",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452600000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452600000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": {
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+          "name": "现金",
+          "type": 2,
+          "currency": "CNY",
+          "opening_balance_minor": 0,
+          "is_archived": 0,
+          "note": null,
+          "created_at": 1789452000000,
+          "updated_at": 1789452000000,
+          "deleted_at": null,
+          "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+          "rev": 3
+        },
+        "mode": "supplement_only",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "skip",
+          "rule": "fill_only_existing",
+          "side": "local",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": null,
+          "localVersionStamp": null,
+          "remoteVersionStamp": null
+        }
+      },
+      "notes": "「仅补充」的全部意义就是「只加不减不改」。任何一处漏判都会让用户精心挑选的补充导入变成一次静默覆盖。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.record.supplement-missing-insert",
+      "kind": "import.merge.record",
+      "title": "supplement_only + 本地没有 ⇒ insert / fill_only_new",
+      "milestone": "M1",
+      "input": {
+        "remote": {
+          "type": "account",
+          "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+          "updatedAt": 1789452000000,
+          "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+          "columns": {
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "name": "招行储蓄卡",
+            "type": 2,
+            "currency": "CNY",
+            "opening_balance_minor": 0,
+            "is_archived": 0,
+            "note": null,
+            "updated_at": 1789452000000,
+            "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+          }
+        },
+        "local": null,
+        "mode": "supplement_only",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "entityKind": "account",
+          "outcome": "insert",
+          "rule": "fill_only_new",
+          "side": "remote",
+          "conflictKind": null,
+          "needsUserReview": false,
+          "write": {
+            "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "arguments": [
+              "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "招行储蓄卡",
+              2,
+              "CNY",
+              0,
+              0,
+              null,
+              1789452000000,
+              "01M2HTD6R0X5308AXGAKPFVAJC"
+            ],
+            "replace": false
+          },
+          "localVersionStamp": null,
+          "remoteVersionStamp": null
+        }
+      },
+      "notes": "同上，另一半：只加不减，不改 —— 加是它的职责。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.plan.merge-batch-mixed",
+      "kind": "import.merge.plan",
+      "title": "一批四条的完整计划：语句序列按阶段序、七态各归各位",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "ledger",
+            "id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "日常",
+              "code": "MAIN01",
+              "currency": "CNY",
+              "is_default": 1,
+              "sort_order": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 20000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "deleted_at": 1789452600000,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "cached_balance_minor": 500000,
+              "balance_as_of": 0,
+              "source_import_job": null,
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ],
+          "txn": [
+            {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            },
+            {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "mode": "merge",
+          "writes": [
+            {
+              "sql": "INSERT INTO ledger (id, name, code, currency, is_default, sort_order, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "日常",
+                "MAIN01",
+                "CNY",
+                1,
+                0,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, credit_limit_minor, statement_day, due_day, repay_account_id, icon, color, is_archived, sort_order, note, created_at, updated_at, deleted_at, device_id, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "（来自其他设备）",
+                1,
+                "CNY",
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                1,
+                0,
+                "导入占位：文件里引用了本机没有的账户，请合并到真实账户",
+                1789550000000,
+                1789550000000,
+                null,
+                "01M2HTD6R0HH0JX05YYJ508BJZ",
+                1
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE txn SET id = ?, ledger_id = ?, type = ?, amount_minor = ?, currency = ?, occurred_at = ?, account_id = ?, to_account_id = ?, category_id = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0YCXNYWYE5F8CGC9X",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                1,
+                20000,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452600000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0YCXNYWYE5F8CGC9X"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "UPDATE txn SET id = ?, ledger_id = ?, type = ?, amount_minor = ?, currency = ?, occurred_at = ?, account_id = ?, to_account_id = ?, category_id = ?, note = ?, deleted_at = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0SK626NCQGSQEVH1N",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                2,
+                500000,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452600000,
+                1789452600000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0SK626NCQGSQEVH1N"
+              ],
+              "replace": true
+            }
+          ],
+          "counts": {
+            "insert": 1,
+            "update": 1,
+            "skip": 1,
+            "mark_deleted": 1,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "insertedCount": 2,
+          "updatedCount": 2,
+          "removedCount": 0,
+          "skippedCount": 1,
+          "conflictCount": 0,
+          "removedCandidates": [],
+          "requiresCountConfirmation": false,
+          "touchedTables": [
+            "account",
+            "ledger",
+            "txn"
+          ],
+          "conflicts": [],
+          "referenceFixes": [
+            {
+              "key": "txn.account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "column": "account_id",
+              "referencedId": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "placeholderName": "（来自其他设备）"
+            },
+            {
+              "key": "txn.account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "column": "account_id",
+              "referencedId": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "placeholderName": "（来自其他设备）"
+            }
+          ]
+        }
+      },
+      "notes": "这是「写什么、按什么顺序写」的总纲。语句顺序不是风格问题：`foreign_keys = ON` 之下，父实体（ledger）必须先于子实体（account / txn），否则整批失败并回滚 ——而失败的表现是「导入报错」，排查方向会被引到数据上。本地行里刻意带了 `cached_balance_minor` / `source_import_job` 这些「导出不带、本地才有」的列：它们不进内容指纹，否则任何一条 account 行都会永远判成「内容不同」，于是重复导入变成一次冲突弹窗。",
+      "tags": [
+        "convergence",
+        "format"
+      ]
+    },
+    {
+      "id": "import.merge.plan.abort-conflict-stops-before-write",
+      "kind": "import.merge.plan",
+      "title": "abort 策略下计划里仍有新增、但没有一条冲突登记",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 20000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "txn": [
+            {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "abort",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "mode": "merge",
+          "writes": [
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0QRMG8Y47ANF1S8GB",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "现金",
+                1,
+                "CNY",
+                500000,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            }
+          ],
+          "counts": {
+            "insert": 1,
+            "update": 0,
+            "skip": 0,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 1,
+            "insert_tombstone": 0
+          },
+          "insertedCount": 1,
+          "updatedCount": 0,
+          "removedCount": 0,
+          "skippedCount": 0,
+          "conflictCount": 0,
+          "removedCandidates": [],
+          "requiresCountConfirmation": false,
+          "touchedTables": [
+            "account",
+            "txn"
+          ],
+          "conflicts": [],
+          "referenceFixes": []
+        }
+      },
+      "notes": "计划是**预演**：它照常算出「本可以插哪几条」，而中止由执行器在备份之前拦下（见 A 的 `import.apply.conflict-deferred`）。中止时不登记 `conflict` 行是有意的：那条记录会指向一个 status=failed 的 job，用户在冲突面板里永远处理不掉它。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.plan.replace-removal-candidates",
+      "kind": "import.merge.plan",
+      "title": "覆盖模式：目标账本内「文件没提到」的本地行进待软删清单，别的账本一条不动",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "cached_balance_minor": 0,
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            },
+            {
+              "id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "旧卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ],
+          "category": [
+            {
+              "id": "01M2HTD6R04YAR1P7JHRRYHP94",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": null,
+              "kind": 1,
+              "name": "餐饮",
+              "is_hidden": 0,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 5
+            }
+          ],
+          "txn": [
+            {
+              "id": "01M2HTD6R09GF6YQ34QB0J8NT3",
+              "ledger_id": "01M2HTD6R0NRESZ4GXNXM7W8ZX",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "replace",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ",
+        "targetLedgerId": "01M2HTD6R0CZPAH14DA9C07KQZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "mode": "replace",
+          "writes": [
+            {
+              "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "招行储蓄卡",
+                2,
+                "CNY",
+                0,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0ZGSYPK2A08KG45A3"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "INSERT INTO txn (id, ledger_id, type, amount_minor, currency, occurred_at, account_id, to_account_id, category_id, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0YCXNYWYE5F8CGC9X",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                1,
+                12345,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE account SET deleted_at = ?, updated_at = ?, rev = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                1789550000000,
+                1789550000000,
+                4,
+                "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "01M2HTD6R0PE4PFEKZSM7MHGV5"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "UPDATE category SET deleted_at = ?, updated_at = ?, rev = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                1789550000000,
+                1789550000000,
+                6,
+                "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "01M2HTD6R04YAR1P7JHRRYHP94"
+              ],
+              "replace": true
+            }
+          ],
+          "counts": {
+            "insert": 1,
+            "update": 1,
+            "skip": 0,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "insertedCount": 1,
+          "updatedCount": 1,
+          "removedCount": 2,
+          "skippedCount": 0,
+          "conflictCount": 0,
+          "removedCandidates": [
+            "01M2HTD6R0PE4PFEKZSM7MHGV5",
+            "01M2HTD6R04YAR1P7JHRRYHP94"
+          ],
+          "requiresCountConfirmation": true,
+          "touchedTables": [
+            "account",
+            "txn"
+          ],
+          "conflicts": [],
+          "referenceFixes": []
+        }
+      },
+      "notes": "跨账本误删是这一块最严重的可能事故：用户只想用一份账本的文件覆盖那个账本，而清单里混进了另一个账本的行。软删清单必须由调用方展示、按条数确认后才执行（`requiresCountConfirmation` 就是那个闸门）。",
+      "tags": [
+        "boundary",
+        "ux"
+      ]
+    },
+    {
+      "id": "import.merge.plan.replace-without-target-ledger-no-removal",
+      "kind": "import.merge.plan",
+      "title": "覆盖模式但没有目标账本 ⇒ 一条也不软删（失败方向指向「少删」）",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "cached_balance_minor": 0,
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            },
+            {
+              "id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "旧卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ],
+          "category": [
+            {
+              "id": "01M2HTD6R04YAR1P7JHRRYHP94",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": null,
+              "kind": 1,
+              "name": "餐饮",
+              "is_hidden": 0,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 5
+            }
+          ],
+          "txn": [
+            {
+              "id": "01M2HTD6R09GF6YQ34QB0J8NT3",
+              "ledger_id": "01M2HTD6R0NRESZ4GXNXM7W8ZX",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "replace",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "mode": "replace",
+          "writes": [
+            {
+              "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "招行储蓄卡",
+                2,
+                "CNY",
+                0,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0ZGSYPK2A08KG45A3"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "INSERT INTO txn (id, ledger_id, type, amount_minor, currency, occurred_at, account_id, to_account_id, category_id, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0YCXNYWYE5F8CGC9X",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                1,
+                12345,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            }
+          ],
+          "counts": {
+            "insert": 1,
+            "update": 1,
+            "skip": 0,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "insertedCount": 1,
+          "updatedCount": 1,
+          "removedCount": 0,
+          "skippedCount": 0,
+          "conflictCount": 0,
+          "removedCandidates": [],
+          "requiresCountConfirmation": false,
+          "touchedTables": [
+            "account",
+            "txn"
+          ],
+          "conflicts": [],
+          "referenceFixes": []
+        }
+      },
+      "notes": "范围不确定时，「少删」的代价是用户发现旧数据还在，「多删」的代价是他再也找不回来。两者不对称，所以缺省必须是不删 —— 而不是「把整个库都当成覆盖范围」。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "import.merge.plan.supplement-only-inserts-only",
+      "kind": "import.merge.plan",
+      "title": "仅补充：本地已有的跳过、没有的插入，一句 UPDATE 都没有",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "supplement_only",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "mode": "supplement_only",
+          "writes": [
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0QRMG8Y47ANF1S8GB",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "现金",
+                1,
+                "CNY",
+                500000,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            }
+          ],
+          "counts": {
+            "insert": 1,
+            "update": 0,
+            "skip": 1,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "insertedCount": 1,
+          "updatedCount": 0,
+          "removedCount": 0,
+          "skippedCount": 1,
+          "conflictCount": 0,
+          "removedCandidates": [],
+          "requiresCountConfirmation": false,
+          "touchedTables": [
+            "account"
+          ],
+          "conflicts": [],
+          "referenceFixes": []
+        }
+      },
+      "notes": "「绝不修改已有记录」是模式契约。计划里出现任何一条 UPDATE 都说明模式串了 ——这种错误在人工比对时极难发现（条数对得上，内容不对）。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.plan.placeholder-before-referrer",
+      "kind": "import.merge.plan",
+      "title": "缺失父实体 ⇒ 占位实体排在被引用记录之前，且落回它自己的阶段位",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "to_account_id": null,
+              "category_id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {},
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "mode": "merge",
+          "writes": [
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, credit_limit_minor, statement_day, due_day, repay_account_id, icon, color, is_archived, sort_order, note, created_at, updated_at, deleted_at, device_id, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0PE4PFEKZSM7MHGV5",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "（来自其他设备）",
+                1,
+                "CNY",
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                1,
+                0,
+                "导入占位：文件里引用了本机没有的账户，请合并到真实账户",
+                1789550000000,
+                1789550000000,
+                null,
+                "01M2HTD6R0HH0JX05YYJ508BJZ",
+                1
+              ],
+              "replace": false
+            },
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0QRMG8Y47ANF1S8GB",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "现金",
+                1,
+                "CNY",
+                500000,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "INSERT INTO category (id, ledger_id, parent_id, kind, name, icon, color, is_system, is_hidden, sort_order, created_at, updated_at, deleted_at, device_id, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0EHXRQ49TVEXC3FDE",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                null,
+                1,
+                "（来自其他设备·VEXC3FDE）",
+                null,
+                null,
+                0,
+                1,
+                0,
+                1789550000000,
+                1789550000000,
+                null,
+                "01M2HTD6R0HH0JX05YYJ508BJZ",
+                1
+              ],
+              "replace": false
+            },
+            {
+              "sql": "INSERT INTO txn (id, ledger_id, type, amount_minor, currency, occurred_at, account_id, to_account_id, category_id, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0YCXNYWYE5F8CGC9X",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                1,
+                12345,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0PE4PFEKZSM7MHGV5",
+                null,
+                "01M2HTD6R0EHXRQ49TVEXC3FDE",
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            }
+          ],
+          "counts": {
+            "insert": 2,
+            "update": 0,
+            "skip": 0,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "insertedCount": 4,
+          "updatedCount": 0,
+          "removedCount": 0,
+          "skippedCount": 0,
+          "conflictCount": 0,
+          "removedCandidates": [],
+          "requiresCountConfirmation": false,
+          "touchedTables": [
+            "account",
+            "txn"
+          ],
+          "conflicts": [],
+          "referenceFixes": [
+            {
+              "key": "txn.account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "column": "account_id",
+              "referencedId": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "placeholderName": "（来自其他设备）"
+            },
+            {
+              "key": "txn.category_id/placeholder_category",
+              "kind": "placeholder_category",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "column": "category_id",
+              "referencedId": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "placeholderName": "（来自其他设备·VEXC3FDE）"
+            }
+          ]
+        }
+      },
+      "notes": "顺序错一步就是整批回滚：`txn.account_id` 指向的 account 行必须已经写入。注意占位**不是**简单前置到队首，而是插在它所处阶段的位置上（account 阶段 /category 阶段各归各位），否则「父实体先于子实体」这条链在不同表之间会串。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.plan.ledger-remap-before-decision",
+      "kind": "import.merge.plan",
+      "title": "账本映射发生在裁决之前 ⇒ 重映射后同内容的那条被认成 skip",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0078WFXPXSXNGDXXR",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "cached_balance_minor": 0,
+              "ledger_id": "01M2HTD6R0P8Q2T0J23ZK49M5N",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ",
+        "ledgerRemap": {
+          "01M2HTD6R0078WFXPXSXNGDXXR": "01M2HTD6R0P8Q2T0J23ZK49M5N"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "mode": "merge",
+          "writes": [],
+          "counts": {
+            "insert": 0,
+            "update": 0,
+            "skip": 1,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "insertedCount": 0,
+          "updatedCount": 0,
+          "removedCount": 0,
+          "skippedCount": 1,
+          "conflictCount": 0,
+          "removedCandidates": [],
+          "requiresCountConfirmation": false,
+          "touchedTables": [
+            "account"
+          ],
+          "conflicts": [],
+          "referenceFixes": []
+        }
+      },
+      "notes": "`ledger_id` 是内容的一部分（它进内容指纹）。若先把记录按旧账本判成 update、再按新账本写进去，这一行的**字面值**与它的**判决依据**就来自两个不同的世界 ——结果看起来对，但下次导入会再判一次，永远收敛不到 skip。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.plan.conflict-row-deterministic",
+      "kind": "import.merge.plan",
+      "title": "冲突登记：主键由 (job, 实体, id, 种类) 派生，两侧版本写进 json 列",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 20000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "txn": [
+            {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452030000,
+              "updated_at": 1789452030000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "mode": "merge",
+          "writes": [
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, credit_limit_minor, statement_day, due_day, repay_account_id, icon, color, is_archived, sort_order, note, created_at, updated_at, deleted_at, device_id, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "（来自其他设备）",
+                1,
+                "CNY",
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                1,
+                0,
+                "导入占位：文件里引用了本机没有的账户，请合并到真实账户",
+                1789550000000,
+                1789550000000,
+                null,
+                "01M2HTD6R0HH0JX05YYJ508BJZ",
+                1
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE txn SET id = ?, ledger_id = ?, type = ?, amount_minor = ?, currency = ?, occurred_at = ?, account_id = ?, to_account_id = ?, category_id = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0YCXNYWYE5F8CGC9X",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                1,
+                20000,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452600000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0YCXNYWYE5F8CGC9X"
+              ],
+              "replace": true
+            }
+          ],
+          "counts": {
+            "insert": 0,
+            "update": 1,
+            "skip": 0,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "insertedCount": 1,
+          "updatedCount": 1,
+          "removedCount": 0,
+          "skippedCount": 0,
+          "conflictCount": 0,
+          "removedCandidates": [],
+          "requiresCountConfirmation": false,
+          "touchedTables": [
+            "txn"
+          ],
+          "conflicts": [],
+          "referenceFixes": [
+            {
+              "key": "txn.account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "column": "account_id",
+              "referencedId": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "placeholderName": "（来自其他设备）"
+            }
+          ]
+        }
+      },
+      "notes": "主键派生而不是随机生成：同一次导入里的同一处冲突不可能产生两行。随机 id 会让「一条分歧被记了两次」变成靠概率保证的事 —— 而用户会以为自己有两条要处理。`resolution` 留 NULL：自动收敛只是为了收敛性，不代表已经替用户做了决定。",
+      "tags": [
+        "convergence",
+        "security"
+      ]
+    },
+    {
+      "id": "import.merge.plan.empty-file-empty-plan",
+      "kind": "import.merge.plan",
+      "title": "空记录集 ⇒ 空计划（不写、不计数、不碰任何表）",
+      "milestone": "M1",
+      "input": {
+        "records": [],
+        "localRows": {},
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "mode": "merge",
+          "writes": [],
+          "counts": {
+            "insert": 0,
+            "update": 0,
+            "skip": 0,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "insertedCount": 0,
+          "updatedCount": 0,
+          "removedCount": 0,
+          "skippedCount": 0,
+          "conflictCount": 0,
+          "removedCandidates": [],
+          "requiresCountConfirmation": false,
+          "touchedTables": [],
+          "conflicts": [],
+          "referenceFixes": []
+        }
+      },
+      "notes": "「文件里一条记录都没有」是合法输入（用户可能只导出了附件）。若计划里凭空出现语句（例如无条件软删），一份空文件就能清空用户的库。",
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "id": "import.merge.converge.batch-order-independent",
+      "kind": "import.merge.converge",
+      "title": "行序打乱后写入集合与阶段序都不变（可交换）",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "ledger",
+            "id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "日常",
+              "code": "MAIN01",
+              "currency": "CNY",
+              "is_default": 1,
+              "sort_order": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡·改",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "deleted_at": 1789452600000,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "cached_balance_minor": 0,
+              "source_import_job": null,
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ],
+          "txn": [
+            {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ",
+        "shuffleSeed": 20260921
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "baselineWrites": [
+            {
+              "sql": "INSERT INTO ledger (id, name, code, currency, is_default, sort_order, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "日常",
+                "MAIN01",
+                "CNY",
+                1,
+                0,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0QRMG8Y47ANF1S8GB",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "现金",
+                1,
+                "CNY",
+                500000,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "招行储蓄卡·改",
+                2,
+                "CNY",
+                0,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0ZGSYPK2A08KG45A3"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "INSERT INTO txn (id, ledger_id, type, amount_minor, currency, occurred_at, account_id, to_account_id, category_id, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0YCXNYWYE5F8CGC9X",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                1,
+                12345,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE txn SET id = ?, ledger_id = ?, type = ?, amount_minor = ?, currency = ?, occurred_at = ?, account_id = ?, to_account_id = ?, category_id = ?, note = ?, deleted_at = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0SK626NCQGSQEVH1N",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                2,
+                500000,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452600000,
+                1789452600000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0SK626NCQGSQEVH1N"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "INSERT INTO conflict (id, job_id, entity, entity_id, kind, local_json, remote_json, resolution, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2MQVXW0905XM4XEMY3NSSVR",
+                "01J8TESTJOB000000000000001",
+                "account",
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                1,
+                "{\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false}",
+                "{\"versionStamp\":\"01M2HTD6R0ZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false}",
+                null,
+                null
+              ],
+              "replace": false
+            }
+          ],
+          "baselineCounts": {
+            "insert": 3,
+            "update": 0,
+            "skip": 0,
+            "mark_deleted": 1,
+            "resurrect": 0,
+            "conflict": 1,
+            "insert_tombstone": 0
+          },
+          "shuffledCountsEqual": true,
+          "shuffledWritesMultisetEqual": true,
+          "shuffledStageOrderPreserved": true,
+          "baselineStageOrder": "ledger > account > txn > conflict",
+          "shuffledStageOrder": "ledger > account > txn > conflict",
+          "secondPassWrites": 0,
+          "secondPassCounts": {
+            "insert": 0,
+            "update": 0,
+            "skip": 5,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "finalState": [
+            "account|01M2HTD6R0QRMG8Y47ANF1S8GB|currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0QRMG8Y47ANF1S8GB,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=现金,note=null,opening_balance_minor=500000,type=1,updated_at=1789452000000",
+            "account|01M2HTD6R0ZGSYPK2A08KG45A3|cached_balance_minor=0,created_at=1789452000000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0ZGSYPK2A08KG45A3,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=招行储蓄卡·改,note=null,opening_balance_minor=0,rev=3,source_import_job=null,type=2,updated_at=1789452000000",
+            "conflict|01M2MQVXW0905XM4XEMY3NSSVR|entity=account,entity_id=01M2HTD6R0ZGSYPK2A08KG45A3,id=01M2MQVXW0905XM4XEMY3NSSVR,job_id=01J8TESTJOB000000000000001,kind=1,local_json={\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false},remote_json={\"versionStamp\":\"01M2HTD6R0ZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false},resolution=null,resolved_at=null",
+            "ledger|01M2HTD6R0CZPAH14DA9C07KQZ|code=MAIN01,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0CZPAH14DA9C07KQZ,is_default=1,name=日常,sort_order=0,updated_at=1789452000000",
+            "txn|01M2HTD6R0SK626NCQGSQEVH1N|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=500000,category_id=null,created_at=1789452000000,currency=CNY,deleted_at=1789452600000,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0SK626NCQGSQEVH1N,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,rev=3,to_account_id=null,type=2,updated_at=1789452600000",
+            "txn|01M2HTD6R0YCXNYWYE5F8CGC9X|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=12345,category_id=null,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0YCXNYWYE5F8CGC9X,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,to_account_id=null,type=1,updated_at=1789452000000"
+          ]
+        }
+      },
+      "notes": "文件里的行序是导出方的实现细节，不该影响合并结果。若某条写入依赖「谁先被处理」，两台设备拿到的同一份文件会得到不同的库 —— 而用户永远看不出差别在哪。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.converge.tombstone-and-edit-order-independent",
+      "kind": "import.merge.converge",
+      "title": "含「一边删除一边编辑」的分歧时，乱序仍然收敛（且冲突登记逐字相同）",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "deleted_at": 1789452600000,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ],
+          "txn": [
+            {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ",
+        "shuffleSeed": 20260921
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "baselineWrites": [
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0QRMG8Y47ANF1S8GB",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "现金",
+                1,
+                "CNY",
+                500000,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE txn SET id = ?, ledger_id = ?, type = ?, amount_minor = ?, currency = ?, occurred_at = ?, account_id = ?, to_account_id = ?, category_id = ?, note = ?, deleted_at = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0SK626NCQGSQEVH1N",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                2,
+                500000,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452600000,
+                1789452600000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0SK626NCQGSQEVH1N"
+              ],
+              "replace": true
+            }
+          ],
+          "baselineCounts": {
+            "insert": 1,
+            "update": 0,
+            "skip": 1,
+            "mark_deleted": 1,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "shuffledCountsEqual": true,
+          "shuffledWritesMultisetEqual": true,
+          "shuffledStageOrderPreserved": true,
+          "baselineStageOrder": "account > txn",
+          "shuffledStageOrder": "account > txn",
+          "secondPassWrites": 0,
+          "secondPassCounts": {
+            "insert": 0,
+            "update": 0,
+            "skip": 3,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "finalState": [
+            "account|01M2HTD6R0QRMG8Y47ANF1S8GB|currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0QRMG8Y47ANF1S8GB,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=现金,note=null,opening_balance_minor=500000,type=1,updated_at=1789452000000",
+            "account|01M2HTD6R0ZGSYPK2A08KG45A3|created_at=1789452000000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0HH0JX05YYJ508BJZ,id=01M2HTD6R0ZGSYPK2A08KG45A3,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=现金,note=null,opening_balance_minor=0,rev=3,type=2,updated_at=1789452000000",
+            "txn|01M2HTD6R0SK626NCQGSQEVH1N|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=500000,category_id=null,created_at=1789452000000,currency=CNY,deleted_at=1789452600000,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0SK626NCQGSQEVH1N,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,rev=3,to_account_id=null,type=2,updated_at=1789452600000"
+          ]
+        }
+      },
+      "notes": "冲突是最容易被实现成「停下来等用户」的地方，而那会立刻破坏收敛性。这里要证明的是：**冲突不影响收敛** —— 取值照旧确定，只是多一条待复核。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.converge.second-import-is-noop",
+      "kind": "import.merge.converge",
+      "title": "本地已是「导入之后」的状态 ⇒ 计划里一条写入都没有（幂等）",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            },
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452600000,
+              "updated_at": 1789452600000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ],
+          "txn": [
+            {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ",
+        "shuffleSeed": 20260921
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "baselineWrites": [],
+          "baselineCounts": {
+            "insert": 0,
+            "update": 0,
+            "skip": 3,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "shuffledCountsEqual": true,
+          "shuffledWritesMultisetEqual": true,
+          "shuffledStageOrderPreserved": true,
+          "baselineStageOrder": "",
+          "shuffledStageOrder": "",
+          "secondPassWrites": 0,
+          "secondPassCounts": {
+            "insert": 0,
+            "update": 0,
+            "skip": 3,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "finalState": [
+            "account|01M2HTD6R0QRMG8Y47ANF1S8GB|created_at=1789452000000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0HH0JX05YYJ508BJZ,id=01M2HTD6R0QRMG8Y47ANF1S8GB,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=现金,note=null,opening_balance_minor=500000,rev=3,type=1,updated_at=1789452000000",
+            "account|01M2HTD6R0ZGSYPK2A08KG45A3|created_at=1789452600000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0HH0JX05YYJ508BJZ,id=01M2HTD6R0ZGSYPK2A08KG45A3,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=招行储蓄卡,note=null,opening_balance_minor=0,rev=3,type=2,updated_at=1789452600000",
+            "txn|01M2HTD6R0YCXNYWYE5F8CGC9X|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=12345,category_id=null,created_at=1789452000000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0HH0JX05YYJ508BJZ,id=01M2HTD6R0YCXNYWYE5F8CGC9X,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,rev=3,to_account_id=null,type=1,updated_at=1789452000000"
+          ]
+        }
+      },
+      "notes": "用户重试导入是常态（网络中断、误操作）。若第二次导入产生任何写入，「同一份备份导入两次结果不变」就不成立 —— 反复重试会不断推高版本戳，让所有设备都以为有新改动。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.converge.skew-conflict-still-converges",
+      "kind": "import.merge.converge",
+      "title": "宽限窗口内的分歧：乱序仍收敛，且第二次导入不再产生写入",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452030000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡·改",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452030000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ",
+        "shuffleSeed": 20260921
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "baselineWrites": [
+            {
+              "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "招行储蓄卡·改",
+                2,
+                "CNY",
+                0,
+                0,
+                null,
+                1789452030000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0ZGSYPK2A08KG45A3"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0QRMG8Y47ANF1S8GB",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "现金",
+                1,
+                "CNY",
+                500000,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "INSERT INTO conflict (id, job_id, entity, entity_id, kind, local_json, remote_json, resolution, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2MQVXW0905XM4XEMY3NSSVR",
+                "01J8TESTJOB000000000000001",
+                "account",
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                1,
+                "{\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false}",
+                "{\"versionStamp\":\"01M2HTE41GZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false}",
+                null,
+                null
+              ],
+              "replace": false
+            }
+          ],
+          "baselineCounts": {
+            "insert": 1,
+            "update": 0,
+            "skip": 0,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 1,
+            "insert_tombstone": 0
+          },
+          "shuffledCountsEqual": true,
+          "shuffledWritesMultisetEqual": true,
+          "shuffledStageOrderPreserved": true,
+          "baselineStageOrder": "account > conflict",
+          "shuffledStageOrder": "account > conflict",
+          "secondPassWrites": 0,
+          "secondPassCounts": {
+            "insert": 0,
+            "update": 0,
+            "skip": 2,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "finalState": [
+            "account|01M2HTD6R0QRMG8Y47ANF1S8GB|currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0QRMG8Y47ANF1S8GB,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=现金,note=null,opening_balance_minor=500000,type=1,updated_at=1789452000000",
+            "account|01M2HTD6R0ZGSYPK2A08KG45A3|created_at=1789452000000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0ZGSYPK2A08KG45A3,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=招行储蓄卡·改,note=null,opening_balance_minor=0,rev=3,type=2,updated_at=1789452030000",
+            "conflict|01M2MQVXW0905XM4XEMY3NSSVR|entity=account,entity_id=01M2HTD6R0ZGSYPK2A08KG45A3,id=01M2MQVXW0905XM4XEMY3NSSVR,job_id=01J8TESTJOB000000000000001,kind=1,local_json={\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false},remote_json={\"versionStamp\":\"01M2HTE41GZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false},resolution=null,resolved_at=null"
+          ]
+        }
+      },
+      "notes": "冲突路径最危险的失败模式是「每次导入都再冲突一次」：用户看见的是一份永远处理不完的待办。这里连着锁两件事：乱序不影响结果，以及冲突写完之后第二遍是 no-op。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "import.merge.converge.split-import-after-account",
+      "kind": "import.merge.converge",
+      "title": "把文件按「account 之后」切成两批依次导入 ⇒ 最终状态与一次导入完全相同（可结合）",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "ledger",
+            "id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "日常",
+              "code": "MAIN01",
+              "currency": "CNY",
+              "is_default": 1,
+              "sort_order": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡·改",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "deleted_at": 1789452600000,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "cached_balance_minor": 0,
+              "source_import_job": null,
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ],
+          "txn": [
+            {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ",
+        "shuffleSeed": 20260921,
+        "splitAfterStage": "account"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "baselineWrites": [
+            {
+              "sql": "INSERT INTO ledger (id, name, code, currency, is_default, sort_order, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "日常",
+                "MAIN01",
+                "CNY",
+                1,
+                0,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0QRMG8Y47ANF1S8GB",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "现金",
+                1,
+                "CNY",
+                500000,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "招行储蓄卡·改",
+                2,
+                "CNY",
+                0,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0ZGSYPK2A08KG45A3"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "INSERT INTO txn (id, ledger_id, type, amount_minor, currency, occurred_at, account_id, to_account_id, category_id, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0YCXNYWYE5F8CGC9X",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                1,
+                12345,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE txn SET id = ?, ledger_id = ?, type = ?, amount_minor = ?, currency = ?, occurred_at = ?, account_id = ?, to_account_id = ?, category_id = ?, note = ?, deleted_at = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0SK626NCQGSQEVH1N",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                2,
+                500000,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452600000,
+                1789452600000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0SK626NCQGSQEVH1N"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "INSERT INTO conflict (id, job_id, entity, entity_id, kind, local_json, remote_json, resolution, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2MQVXW0905XM4XEMY3NSSVR",
+                "01J8TESTJOB000000000000001",
+                "account",
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                1,
+                "{\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false}",
+                "{\"versionStamp\":\"01M2HTD6R0ZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false}",
+                null,
+                null
+              ],
+              "replace": false
+            }
+          ],
+          "baselineCounts": {
+            "insert": 3,
+            "update": 0,
+            "skip": 0,
+            "mark_deleted": 1,
+            "resurrect": 0,
+            "conflict": 1,
+            "insert_tombstone": 0
+          },
+          "shuffledCountsEqual": true,
+          "shuffledWritesMultisetEqual": true,
+          "shuffledStageOrderPreserved": true,
+          "baselineStageOrder": "ledger > account > txn > conflict",
+          "shuffledStageOrder": "ledger > account > txn > conflict",
+          "secondPassWrites": 0,
+          "secondPassCounts": {
+            "insert": 0,
+            "update": 0,
+            "skip": 5,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "finalState": [
+            "account|01M2HTD6R0QRMG8Y47ANF1S8GB|currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0QRMG8Y47ANF1S8GB,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=现金,note=null,opening_balance_minor=500000,type=1,updated_at=1789452000000",
+            "account|01M2HTD6R0ZGSYPK2A08KG45A3|cached_balance_minor=0,created_at=1789452000000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0ZGSYPK2A08KG45A3,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=招行储蓄卡·改,note=null,opening_balance_minor=0,rev=3,source_import_job=null,type=2,updated_at=1789452000000",
+            "conflict|01M2MQVXW0905XM4XEMY3NSSVR|entity=account,entity_id=01M2HTD6R0ZGSYPK2A08KG45A3,id=01M2MQVXW0905XM4XEMY3NSSVR,job_id=01J8TESTJOB000000000000001,kind=1,local_json={\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false},remote_json={\"versionStamp\":\"01M2HTD6R0ZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false},resolution=null,resolved_at=null",
+            "ledger|01M2HTD6R0CZPAH14DA9C07KQZ|code=MAIN01,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0CZPAH14DA9C07KQZ,is_default=1,name=日常,sort_order=0,updated_at=1789452000000",
+            "txn|01M2HTD6R0SK626NCQGSQEVH1N|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=500000,category_id=null,created_at=1789452000000,currency=CNY,deleted_at=1789452600000,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0SK626NCQGSQEVH1N,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,rev=3,to_account_id=null,type=2,updated_at=1789452600000",
+            "txn|01M2HTD6R0YCXNYWYE5F8CGC9X|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=12345,category_id=null,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0YCXNYWYE5F8CGC9X,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,to_account_id=null,type=1,updated_at=1789452000000"
+          ],
+          "splitFinalStateEqual": true,
+          "splitFinalState": [
+            "account|01M2HTD6R0QRMG8Y47ANF1S8GB|currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0QRMG8Y47ANF1S8GB,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=现金,note=null,opening_balance_minor=500000,type=1,updated_at=1789452000000",
+            "account|01M2HTD6R0ZGSYPK2A08KG45A3|cached_balance_minor=0,created_at=1789452000000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0ZGSYPK2A08KG45A3,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=招行储蓄卡·改,note=null,opening_balance_minor=0,rev=3,source_import_job=null,type=2,updated_at=1789452000000",
+            "conflict|01M2MQVXW0905XM4XEMY3NSSVR|entity=account,entity_id=01M2HTD6R0ZGSYPK2A08KG45A3,id=01M2MQVXW0905XM4XEMY3NSSVR,job_id=01J8TESTJOB000000000000001,kind=1,local_json={\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false},remote_json={\"versionStamp\":\"01M2HTD6R0ZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false},resolution=null,resolved_at=null",
+            "ledger|01M2HTD6R0CZPAH14DA9C07KQZ|code=MAIN01,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0CZPAH14DA9C07KQZ,is_default=1,name=日常,sort_order=0,updated_at=1789452000000",
+            "txn|01M2HTD6R0SK626NCQGSQEVH1N|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=500000,category_id=null,created_at=1789452000000,currency=CNY,deleted_at=1789452600000,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0SK626NCQGSQEVH1N,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,rev=3,to_account_id=null,type=2,updated_at=1789452600000",
+            "txn|01M2HTD6R0YCXNYWYE5F8CGC9X|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=12345,category_id=null,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0YCXNYWYE5F8CGC9X,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,to_account_id=null,type=1,updated_at=1789452000000"
+          ]
+        }
+      },
+      "notes": "「分两次导入一份文件」是真实场景（先导账本与账户，隔天再导交易）。若两次导入的结果与一次导入不同，用户得到的库就取决于他当时的操作顺序 ——这是无后端同步里最难排查的一类不一致。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.converge.split-import-after-ledger",
+      "kind": "import.merge.converge",
+      "title": "把文件按「ledger 之后」切成两批 ⇒ 最终状态同样与一次导入完全相同",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "ledger",
+            "id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "日常",
+              "code": "MAIN01",
+              "currency": "CNY",
+              "is_default": 1,
+              "sort_order": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 1,
+              "currency": "CNY",
+              "opening_balance_minor": 500000,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡·改",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+            "updatedAt": 1789452600000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "deleted_at": 1789452600000,
+              "updated_at": 1789452600000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "account": [
+            {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "cached_balance_minor": 0,
+              "source_import_job": null,
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ],
+          "txn": [
+            {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": null,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "mode": "merge",
+        "strategy": "converge",
+        "deleteEdit": "delete_wins",
+        "skewWindowMs": 60000,
+        "jobId": "01J8TESTJOB000000000000001",
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ",
+        "shuffleSeed": 20260921,
+        "splitAfterStage": "ledger"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "baselineWrites": [
+            {
+              "sql": "INSERT INTO ledger (id, name, code, currency, is_default, sort_order, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "日常",
+                "MAIN01",
+                "CNY",
+                1,
+                0,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "INSERT INTO account (id, ledger_id, name, type, currency, opening_balance_minor, is_archived, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0QRMG8Y47ANF1S8GB",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "现金",
+                1,
+                "CNY",
+                500000,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE account SET id = ?, ledger_id = ?, name = ?, type = ?, currency = ?, opening_balance_minor = ?, is_archived = ?, note = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "招行储蓄卡·改",
+                2,
+                "CNY",
+                0,
+                0,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0ZGSYPK2A08KG45A3"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "INSERT INTO txn (id, ledger_id, type, amount_minor, currency, occurred_at, account_id, to_account_id, category_id, note, updated_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2HTD6R0YCXNYWYE5F8CGC9X",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                1,
+                12345,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452000000,
+                "01M2HTD6R0X5308AXGAKPFVAJC"
+              ],
+              "replace": false
+            },
+            {
+              "sql": "UPDATE txn SET id = ?, ledger_id = ?, type = ?, amount_minor = ?, currency = ?, occurred_at = ?, account_id = ?, to_account_id = ?, category_id = ?, note = ?, deleted_at = ?, updated_at = ?, device_id = ? WHERE id = ?",
+              "arguments": [
+                "01M2HTD6R0SK626NCQGSQEVH1N",
+                "01M2HTD6R0CZPAH14DA9C07KQZ",
+                2,
+                500000,
+                "CNY",
+                1789452000000,
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                null,
+                null,
+                null,
+                1789452600000,
+                1789452600000,
+                "01M2HTD6R0X5308AXGAKPFVAJC",
+                "01M2HTD6R0SK626NCQGSQEVH1N"
+              ],
+              "replace": true
+            },
+            {
+              "sql": "INSERT INTO conflict (id, job_id, entity, entity_id, kind, local_json, remote_json, resolution, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "arguments": [
+                "01M2MQVXW0905XM4XEMY3NSSVR",
+                "01J8TESTJOB000000000000001",
+                "account",
+                "01M2HTD6R0ZGSYPK2A08KG45A3",
+                1,
+                "{\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false}",
+                "{\"versionStamp\":\"01M2HTD6R0ZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false}",
+                null,
+                null
+              ],
+              "replace": false
+            }
+          ],
+          "baselineCounts": {
+            "insert": 3,
+            "update": 0,
+            "skip": 0,
+            "mark_deleted": 1,
+            "resurrect": 0,
+            "conflict": 1,
+            "insert_tombstone": 0
+          },
+          "shuffledCountsEqual": true,
+          "shuffledWritesMultisetEqual": true,
+          "shuffledStageOrderPreserved": true,
+          "baselineStageOrder": "ledger > account > txn > conflict",
+          "shuffledStageOrder": "ledger > account > txn > conflict",
+          "secondPassWrites": 0,
+          "secondPassCounts": {
+            "insert": 0,
+            "update": 0,
+            "skip": 5,
+            "mark_deleted": 0,
+            "resurrect": 0,
+            "conflict": 0,
+            "insert_tombstone": 0
+          },
+          "finalState": [
+            "account|01M2HTD6R0QRMG8Y47ANF1S8GB|currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0QRMG8Y47ANF1S8GB,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=现金,note=null,opening_balance_minor=500000,type=1,updated_at=1789452000000",
+            "account|01M2HTD6R0ZGSYPK2A08KG45A3|cached_balance_minor=0,created_at=1789452000000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0ZGSYPK2A08KG45A3,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=招行储蓄卡·改,note=null,opening_balance_minor=0,rev=3,source_import_job=null,type=2,updated_at=1789452000000",
+            "conflict|01M2MQVXW0905XM4XEMY3NSSVR|entity=account,entity_id=01M2HTD6R0ZGSYPK2A08KG45A3,id=01M2MQVXW0905XM4XEMY3NSSVR,job_id=01J8TESTJOB000000000000001,kind=1,local_json={\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false},remote_json={\"versionStamp\":\"01M2HTD6R0ZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false},resolution=null,resolved_at=null",
+            "ledger|01M2HTD6R0CZPAH14DA9C07KQZ|code=MAIN01,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0CZPAH14DA9C07KQZ,is_default=1,name=日常,sort_order=0,updated_at=1789452000000",
+            "txn|01M2HTD6R0SK626NCQGSQEVH1N|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=500000,category_id=null,created_at=1789452000000,currency=CNY,deleted_at=1789452600000,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0SK626NCQGSQEVH1N,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,rev=3,to_account_id=null,type=2,updated_at=1789452600000",
+            "txn|01M2HTD6R0YCXNYWYE5F8CGC9X|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=12345,category_id=null,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0YCXNYWYE5F8CGC9X,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,to_account_id=null,type=1,updated_at=1789452000000"
+          ],
+          "splitFinalStateEqual": true,
+          "splitFinalState": [
+            "account|01M2HTD6R0QRMG8Y47ANF1S8GB|currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0QRMG8Y47ANF1S8GB,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=现金,note=null,opening_balance_minor=500000,type=1,updated_at=1789452000000",
+            "account|01M2HTD6R0ZGSYPK2A08KG45A3|cached_balance_minor=0,created_at=1789452000000,currency=CNY,deleted_at=null,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0ZGSYPK2A08KG45A3,is_archived=0,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,name=招行储蓄卡·改,note=null,opening_balance_minor=0,rev=3,source_import_job=null,type=2,updated_at=1789452000000",
+            "conflict|01M2MQVXW0905XM4XEMY3NSSVR|entity=account,entity_id=01M2HTD6R0ZGSYPK2A08KG45A3,id=01M2MQVXW0905XM4XEMY3NSSVR,job_id=01J8TESTJOB000000000000001,kind=1,local_json={\"versionStamp\":\"01M2HTD6R0F5VEVHN2G4C010FG\",\"contentHash\":\"bb674bed9488c216464c810395faf693977faa070249007424d1bdaa1cb005de\",\"deleted\":false},remote_json={\"versionStamp\":\"01M2HTD6R0ZQ6Y1D158RW1VJYN\",\"contentHash\":\"22423cb941867fc793e97bd717ca9e11802eb0292440e03d070407ff621387a8\",\"deleted\":false},resolution=null,resolved_at=null",
+            "ledger|01M2HTD6R0CZPAH14DA9C07KQZ|code=MAIN01,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0CZPAH14DA9C07KQZ,is_default=1,name=日常,sort_order=0,updated_at=1789452000000",
+            "txn|01M2HTD6R0SK626NCQGSQEVH1N|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=500000,category_id=null,created_at=1789452000000,currency=CNY,deleted_at=1789452600000,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0SK626NCQGSQEVH1N,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,rev=3,to_account_id=null,type=2,updated_at=1789452600000",
+            "txn|01M2HTD6R0YCXNYWYE5F8CGC9X|account_id=01M2HTD6R0ZGSYPK2A08KG45A3,amount_minor=12345,category_id=null,currency=CNY,device_id=01M2HTD6R0X5308AXGAKPFVAJC,id=01M2HTD6R0YCXNYWYE5F8CGC9X,ledger_id=01M2HTD6R0CZPAH14DA9C07KQZ,note=null,occurred_at=1789452000000,to_account_id=null,type=1,updated_at=1789452000000"
+          ]
+        }
+      },
+      "notes": "批界换一个位置再验一次。只验一个批界的话，实现里那条「第一批先跑」的假设可能恰好只在那个位置成立。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.reference.placeholder-account",
+      "kind": "import.merge.reference",
+      "title": "S11：txn.account_id 指向本地没有的账户 ⇒ 造占位账户（保留 id、置 is_archived）",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "to_account_id": null,
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {},
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "placeholders": [
+            {
+              "table": "account",
+              "id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "columns": {
+                "id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+                "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "name": "（来自其他设备）",
+                "type": 1,
+                "currency": "CNY",
+                "opening_balance_minor": 0,
+                "credit_limit_minor": null,
+                "statement_day": null,
+                "due_day": null,
+                "repay_account_id": null,
+                "icon": null,
+                "color": null,
+                "is_archived": 1,
+                "sort_order": 0,
+                "note": "导入占位：文件里引用了本机没有的账户，请合并到真实账户",
+                "created_at": 1789550000000,
+                "updated_at": 1789550000000,
+                "deleted_at": null,
+                "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "rev": 1
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "key": "txn.account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "column": "account_id",
+              "referencedId": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "placeholderName": "（来自其他设备）"
+            }
+          ],
+          "normalized": [
+            {
+              "table": "txn",
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "parentId": null
+            }
+          ]
+        }
+      },
+      "notes": "一份**部分导出**的文件里，交易可以提着本地没有的账户：那笔交易在这次导出范围内，账户属于上次导出的范围。这不是「文件坏了」，而是「文件只讲了一半的故事」——整体回滚会让用户永远导不进这份文件，而凭空丢下这笔交易等于丢数据。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "import.merge.reference.placeholder-account-dedup",
+      "kind": "import.merge.reference",
+      "title": "同一个缺失账户被两条记录引用 ⇒ 只造一个占位；不同 id 各造一个",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 3,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "to_account_id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "category_id": null,
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "account",
+            "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "现金",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "repay_account_id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {},
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "placeholders": [
+            {
+              "table": "account",
+              "id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "columns": {
+                "id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+                "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "name": "（来自其他设备）",
+                "type": 1,
+                "currency": "CNY",
+                "opening_balance_minor": 0,
+                "credit_limit_minor": null,
+                "statement_day": null,
+                "due_day": null,
+                "repay_account_id": null,
+                "icon": null,
+                "color": null,
+                "is_archived": 1,
+                "sort_order": 0,
+                "note": "导入占位：文件里引用了本机没有的账户，请合并到真实账户",
+                "created_at": 1789550000000,
+                "updated_at": 1789550000000,
+                "deleted_at": null,
+                "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "rev": 1
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "key": "account.repay_account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "account",
+              "recordId": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "column": "repay_account_id",
+              "referencedId": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "placeholderName": "（来自其他设备）"
+            },
+            {
+              "key": "txn.account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "column": "account_id",
+              "referencedId": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "placeholderName": "（来自其他设备）"
+            },
+            {
+              "key": "txn.to_account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "column": "to_account_id",
+              "referencedId": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "placeholderName": "（来自其他设备）"
+            }
+          ],
+          "normalized": [
+            {
+              "table": "txn",
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "parentId": null
+            },
+            {
+              "table": "account",
+              "id": "01M2HTD6R0QRMG8Y47ANF1S8GB",
+              "parentId": null
+            }
+          ]
+        }
+      },
+      "notes": "同一 id 造两个占位是一次主键冲突，会让整批回滚 —— 一次「修复」把整次导入炸掉，而失败信息只会说「UNIQUE constraint failed」。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.reference.placeholder-category-out",
+      "kind": "import.merge.reference",
+      "title": "S12：支出交易引用缺失分类 ⇒ 占位分类 kind=1，名字带 id 后缀",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 1,
+              "amount_minor": 12345,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {},
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "placeholders": [
+            {
+              "table": "account",
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "columns": {
+                "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "name": "（来自其他设备）",
+                "type": 1,
+                "currency": "CNY",
+                "opening_balance_minor": 0,
+                "credit_limit_minor": null,
+                "statement_day": null,
+                "due_day": null,
+                "repay_account_id": null,
+                "icon": null,
+                "color": null,
+                "is_archived": 1,
+                "sort_order": 0,
+                "note": "导入占位：文件里引用了本机没有的账户，请合并到真实账户",
+                "created_at": 1789550000000,
+                "updated_at": 1789550000000,
+                "deleted_at": null,
+                "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "rev": 1
+              }
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "columns": {
+                "id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+                "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "parent_id": null,
+                "kind": 1,
+                "name": "（来自其他设备·VEXC3FDE）",
+                "icon": null,
+                "color": null,
+                "is_system": 0,
+                "is_hidden": 1,
+                "sort_order": 0,
+                "created_at": 1789550000000,
+                "updated_at": 1789550000000,
+                "deleted_at": null,
+                "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "rev": 1
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "key": "txn.account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "column": "account_id",
+              "referencedId": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "placeholderName": "（来自其他设备）"
+            },
+            {
+              "key": "txn.category_id/placeholder_category",
+              "kind": "placeholder_category",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "column": "category_id",
+              "referencedId": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "placeholderName": "（来自其他设备·VEXC3FDE）"
+            }
+          ],
+          "normalized": [
+            {
+              "table": "txn",
+              "id": "01M2HTD6R0YCXNYWYE5F8CGC9X",
+              "parentId": null
+            }
+          ]
+        }
+      },
+      "notes": "名字必须带 id 后缀：`ux_category_name` 是 `(ledger_id, kind, parent, name)` 上的唯一索引。两个占位分类都叫「（来自其他设备）」就是一次 UNIQUE 冲突 —— 又是「修复把导入炸掉」。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.reference.placeholder-category-in",
+      "kind": "import.merge.reference",
+      "title": "S12：收入交易引用缺失分类 ⇒ 占位分类 kind 跟交易方向走（2）",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "txn",
+            "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "type": 2,
+              "amount_minor": 500000,
+              "currency": "CNY",
+              "occurred_at": 1789452000000,
+              "account_id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "to_account_id": null,
+              "category_id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "note": null,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {},
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "placeholders": [
+            {
+              "table": "account",
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "columns": {
+                "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+                "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "name": "（来自其他设备）",
+                "type": 1,
+                "currency": "CNY",
+                "opening_balance_minor": 0,
+                "credit_limit_minor": null,
+                "statement_day": null,
+                "due_day": null,
+                "repay_account_id": null,
+                "icon": null,
+                "color": null,
+                "is_archived": 1,
+                "sort_order": 0,
+                "note": "导入占位：文件里引用了本机没有的账户，请合并到真实账户",
+                "created_at": 1789550000000,
+                "updated_at": 1789550000000,
+                "deleted_at": null,
+                "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "rev": 1
+              }
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "columns": {
+                "id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+                "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "parent_id": null,
+                "kind": 2,
+                "name": "（来自其他设备·VEXC3FDE）",
+                "icon": null,
+                "color": null,
+                "is_system": 0,
+                "is_hidden": 1,
+                "sort_order": 0,
+                "created_at": 1789550000000,
+                "updated_at": 1789550000000,
+                "deleted_at": null,
+                "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "rev": 1
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "key": "txn.account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "column": "account_id",
+              "referencedId": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "placeholderName": "（来自其他设备）"
+            },
+            {
+              "key": "txn.category_id/placeholder_category",
+              "kind": "placeholder_category",
+              "reason": "missing",
+              "entity": "txn",
+              "recordId": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "column": "category_id",
+              "referencedId": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "placeholderName": "（来自其他设备·VEXC3FDE）"
+            }
+          ],
+          "normalized": [
+            {
+              "table": "txn",
+              "id": "01M2HTD6R0SK626NCQGSQEVH1N",
+              "parentId": null
+            }
+          ]
+        }
+      },
+      "notes": "分类的方向（支出/收入）错了，用户合并到真实分类时要先改方向 —— 而方向字段没有界面入口。能推出来的信息不该丢。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "import.merge.reference.placeholder-budget-category",
+      "kind": "import.merge.reference",
+      "title": "S12：预算引用缺失分类 ⇒ 占位分类 kind=1（预算没有方向字段，取支出）",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "budget",
+            "id": "01M2HTD6R06VT85QZJ32QFW64S",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R06VT85QZJ32QFW64S",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "period_type": 1,
+              "period_key": "2026-09",
+              "amount_minor": 100000,
+              "category_id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {},
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "placeholders": [
+            {
+              "table": "category",
+              "id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "columns": {
+                "id": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+                "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "parent_id": null,
+                "kind": 1,
+                "name": "（来自其他设备·VEXC3FDE）",
+                "icon": null,
+                "color": null,
+                "is_system": 0,
+                "is_hidden": 1,
+                "sort_order": 0,
+                "created_at": 1789550000000,
+                "updated_at": 1789550000000,
+                "deleted_at": null,
+                "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "rev": 1
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "key": "budget.category_id/placeholder_category",
+              "kind": "placeholder_category",
+              "reason": "missing",
+              "entity": "budget",
+              "recordId": "01M2HTD6R06VT85QZJ32QFW64S",
+              "column": "category_id",
+              "referencedId": "01M2HTD6R0EHXRQ49TVEXC3FDE",
+              "placeholderName": "（来自其他设备·VEXC3FDE）"
+            }
+          ],
+          "normalized": [
+            {
+              "table": "budget",
+              "id": "01M2HTD6R06VT85QZJ32QFW64S",
+              "parentId": null
+            }
+          ]
+        }
+      },
+      "notes": "猜不出来时取支出：支出是绝大多数场景，且猜错方向不会损坏数据 ——用户合并到真实分类时会一并修正。反过来「因为猜不准所以不修」会让预算永远悬空。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.reference.placeholder-repay-account",
+      "kind": "import.merge.reference",
+      "title": "S11：account.repay_account_id 指向缺失账户 ⇒ 同样造占位账户",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "account",
+            "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "name": "招行储蓄卡",
+              "type": 2,
+              "currency": "CNY",
+              "opening_balance_minor": 0,
+              "is_archived": 0,
+              "note": null,
+              "repay_account_id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {},
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "placeholders": [
+            {
+              "table": "account",
+              "id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "columns": {
+                "id": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+                "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+                "name": "（来自其他设备）",
+                "type": 1,
+                "currency": "CNY",
+                "opening_balance_minor": 0,
+                "credit_limit_minor": null,
+                "statement_day": null,
+                "due_day": null,
+                "repay_account_id": null,
+                "icon": null,
+                "color": null,
+                "is_archived": 1,
+                "sort_order": 0,
+                "note": "导入占位：文件里引用了本机没有的账户，请合并到真实账户",
+                "created_at": 1789550000000,
+                "updated_at": 1789550000000,
+                "deleted_at": null,
+                "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+                "rev": 1
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "key": "account.repay_account_id/placeholder_account",
+              "kind": "placeholder_account",
+              "reason": "missing",
+              "entity": "account",
+              "recordId": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "column": "repay_account_id",
+              "referencedId": "01M2HTD6R0PE4PFEKZSM7MHGV5",
+              "placeholderName": "（来自其他设备）"
+            }
+          ],
+          "normalized": [
+            {
+              "table": "account",
+              "id": "01M2HTD6R0ZGSYPK2A08KG45A3",
+              "parentId": null
+            }
+          ]
+        }
+      },
+      "notes": "还款账户是账户自己的引用。漏掉这一条的后果不是报错，而是账户列表里那张卡「还款账户」一栏空着 —— 用户只能自己回忆当年绑的是哪张卡。",
+      "tags": [
+        "convergence"
+      ]
+    },
+    {
+      "id": "import.merge.reference.promote-parent-deleted-and-missing",
+      "kind": "import.merge.reference",
+      "title": "S14：父分类被删 ⇒ 升级为一级（deleted）；父分类从没存在过 ⇒ 同样升级（missing）",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "category",
+            "id": "01M2HTD6R0T7GW59DFY3RKDMQ5",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0T7GW59DFY3RKDMQ5",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R04YAR1P7JHRRYHP94",
+              "kind": 1,
+              "name": "午饭",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R03G72CXQT2DQ03V2Y",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R03G72CXQT2DQ03V2Y",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R00J9X1CMHGQBXEMT5",
+              "kind": 1,
+              "name": "孤儿",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {
+          "category": [
+            {
+              "id": "01M2HTD6R04YAR1P7JHRRYHP94",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": null,
+              "kind": 1,
+              "name": "餐饮",
+              "is_hidden": 0,
+              "created_at": 1789452000000,
+              "updated_at": 1789452000000,
+              "deleted_at": 1789452030000,
+              "device_id": "01M2HTD6R0HH0JX05YYJ508BJZ",
+              "rev": 3
+            }
+          ]
+        },
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "placeholders": [],
+          "fixes": [
+            {
+              "key": "category.parent_id/promote_to_root",
+              "kind": "promote_to_root",
+              "reason": "missing",
+              "entity": "category",
+              "recordId": "01M2HTD6R03G72CXQT2DQ03V2Y",
+              "column": "parent_id",
+              "referencedId": "01M2HTD6R00J9X1CMHGQBXEMT5",
+              "placeholderName": ""
+            },
+            {
+              "key": "category.parent_id/promote_to_root",
+              "kind": "promote_to_root",
+              "reason": "deleted",
+              "entity": "category",
+              "recordId": "01M2HTD6R0T7GW59DFY3RKDMQ5",
+              "column": "parent_id",
+              "referencedId": "01M2HTD6R04YAR1P7JHRRYHP94",
+              "placeholderName": ""
+            }
+          ],
+          "normalized": [
+            {
+              "table": "category",
+              "id": "01M2HTD6R0T7GW59DFY3RKDMQ5",
+              "parentId": null
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R03G72CXQT2DQ03V2Y",
+              "parentId": null
+            }
+          ]
+        }
+      },
+      "notes": "「被删」与「从没存在过」要分开报：前者用户能去归档里找回来，后者说明这份文件本来就不完整。而处置相同（升级为一级）—— 子分类挂在不可达的父下，在界面里就是彻底看不见，那比挂在根上更糟。",
+      "tags": [
+        "convergence",
+        "ux"
+      ]
+    },
+    {
+      "id": "import.merge.reference.parent-cycle-self-and-too-deep",
+      "kind": "import.merge.reference",
+      "title": "环 / 自指 / 超过 8 层 ⇒ 一律升级为一级（cycle / too_deep），一级分类原样保留",
+      "milestone": "M1",
+      "input": {
+        "records": [
+          {
+            "type": "category",
+            "id": "01M2HTD6R0A4R3YQN5SJ1PF8EE",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0A4R3YQN5SJ1PF8EE",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": null,
+              "kind": 1,
+              "name": "根分类",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R02ZJCXDGQJ6KVZVDZ",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R02ZJCXDGQJ6KVZVDZ",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R0A4R3YQN5SJ1PF8EE",
+              "kind": 1,
+              "name": "第 1 层",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R0EKN6NXJE1PB708TY",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0EKN6NXJE1PB708TY",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R02ZJCXDGQJ6KVZVDZ",
+              "kind": 1,
+              "name": "第 2 层",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R0WE0ZZ5M2WQFBCM8Y",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0WE0ZZ5M2WQFBCM8Y",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R0EKN6NXJE1PB708TY",
+              "kind": 1,
+              "name": "第 3 层",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R08Q0SAS26BY4JBWCY",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R08Q0SAS26BY4JBWCY",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R0WE0ZZ5M2WQFBCM8Y",
+              "kind": 1,
+              "name": "第 4 层",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R03X00ZYNDJPHZEC1Z",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R03X00ZYNDJPHZEC1Z",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R08Q0SAS26BY4JBWCY",
+              "kind": 1,
+              "name": "第 5 层",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R01VW5BYGR4C99EFMH",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R01VW5BYGR4C99EFMH",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R03X00ZYNDJPHZEC1Z",
+              "kind": 1,
+              "name": "第 6 层",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R0A4RCGENXF2A6WQZP",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0A4RCGENXF2A6WQZP",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R01VW5BYGR4C99EFMH",
+              "kind": 1,
+              "name": "第 7 层",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R0YS1GDVK016Z4ZVA1",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0YS1GDVK016Z4ZVA1",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R0A4RCGENXF2A6WQZP",
+              "kind": 1,
+              "name": "第 8 层",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R0V0NM11XEQKS6FQGT",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0V0NM11XEQKS6FQGT",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R0YS1GDVK016Z4ZVA1",
+              "kind": 1,
+              "name": "第 9 层",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R0Y5DB7W5PH60RG41C",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0Y5DB7W5PH60RG41C",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R0QZKQPC446BQR8YQY",
+              "kind": 1,
+              "name": "环 A",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R0QZKQPC446BQR8YQY",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0QZKQPC446BQR8YQY",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R0Y5DB7W5PH60RG41C",
+              "kind": 1,
+              "name": "环 B",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R06TNY1NSR69SVQRZZ",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R06TNY1NSR69SVQRZZ",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R06TNY1NSR69SVQRZZ",
+              "kind": 1,
+              "name": "自指",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          },
+          {
+            "type": "category",
+            "id": "01M2HTD6R0KDDHH7EZYWH3D340",
+            "updatedAt": 1789452000000,
+            "deviceId": "01M2HTD6R0X5308AXGAKPFVAJC",
+            "columns": {
+              "id": "01M2HTD6R0KDDHH7EZYWH3D340",
+              "ledger_id": "01M2HTD6R0CZPAH14DA9C07KQZ",
+              "parent_id": "01M2HTD6R0A4R3YQN5SJ1PF8EE",
+              "kind": 1,
+              "name": "正常的子分类",
+              "is_hidden": 0,
+              "updated_at": 1789452000000,
+              "device_id": "01M2HTD6R0X5308AXGAKPFVAJC"
+            }
+          }
+        ],
+        "localRows": {},
+        "nowMillis": 1789550000000,
+        "localDeviceId": "01M2HTD6R0HH0JX05YYJ508BJZ"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "placeholders": [],
+          "fixes": [
+            {
+              "key": "category.parent_id/promote_to_root",
+              "kind": "promote_to_root",
+              "reason": "cycle",
+              "entity": "category",
+              "recordId": "01M2HTD6R06TNY1NSR69SVQRZZ",
+              "column": "parent_id",
+              "referencedId": "01M2HTD6R06TNY1NSR69SVQRZZ",
+              "placeholderName": ""
+            },
+            {
+              "key": "category.parent_id/promote_to_root",
+              "kind": "promote_to_root",
+              "reason": "cycle",
+              "entity": "category",
+              "recordId": "01M2HTD6R0QZKQPC446BQR8YQY",
+              "column": "parent_id",
+              "referencedId": "01M2HTD6R0Y5DB7W5PH60RG41C",
+              "placeholderName": ""
+            },
+            {
+              "key": "category.parent_id/promote_to_root",
+              "kind": "promote_to_root",
+              "reason": "too_deep",
+              "entity": "category",
+              "recordId": "01M2HTD6R0V0NM11XEQKS6FQGT",
+              "column": "parent_id",
+              "referencedId": "01M2HTD6R0YS1GDVK016Z4ZVA1",
+              "placeholderName": ""
+            },
+            {
+              "key": "category.parent_id/promote_to_root",
+              "kind": "promote_to_root",
+              "reason": "cycle",
+              "entity": "category",
+              "recordId": "01M2HTD6R0Y5DB7W5PH60RG41C",
+              "column": "parent_id",
+              "referencedId": "01M2HTD6R0QZKQPC446BQR8YQY",
+              "placeholderName": ""
+            }
+          ],
+          "normalized": [
+            {
+              "table": "category",
+              "id": "01M2HTD6R0A4R3YQN5SJ1PF8EE",
+              "parentId": null
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R02ZJCXDGQJ6KVZVDZ",
+              "parentId": "01M2HTD6R0A4R3YQN5SJ1PF8EE"
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0EKN6NXJE1PB708TY",
+              "parentId": "01M2HTD6R02ZJCXDGQJ6KVZVDZ"
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0WE0ZZ5M2WQFBCM8Y",
+              "parentId": "01M2HTD6R0EKN6NXJE1PB708TY"
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R08Q0SAS26BY4JBWCY",
+              "parentId": "01M2HTD6R0WE0ZZ5M2WQFBCM8Y"
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R03X00ZYNDJPHZEC1Z",
+              "parentId": "01M2HTD6R08Q0SAS26BY4JBWCY"
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R01VW5BYGR4C99EFMH",
+              "parentId": "01M2HTD6R03X00ZYNDJPHZEC1Z"
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0A4RCGENXF2A6WQZP",
+              "parentId": "01M2HTD6R01VW5BYGR4C99EFMH"
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0YS1GDVK016Z4ZVA1",
+              "parentId": "01M2HTD6R0A4RCGENXF2A6WQZP"
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0V0NM11XEQKS6FQGT",
+              "parentId": null
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0Y5DB7W5PH60RG41C",
+              "parentId": null
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0QZKQPC446BQR8YQY",
+              "parentId": null
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R06TNY1NSR69SVQRZZ",
+              "parentId": null
+            },
+            {
+              "table": "category",
+              "id": "01M2HTD6R0KDDHH7EZYWH3D340",
+              "parentId": "01M2HTD6R0A4R3YQN5SJ1PF8EE"
+            }
+          ]
+        }
+      },
+      "notes": "构造出来的 parent 链不该让修复变成一次无界遍历（超深的那条同时是遍历的边界）。而**一级分类必须原样保留**：修复器若只处理「有父」的那些记录、又忘了把「没有父」的还回去，表现就是「导入之后少了几个分类」—— 用户要过很久才会发现。",
+      "tags": [
+        "boundary",
+        "convergence"
+      ]
+    }
+  ]
+}
