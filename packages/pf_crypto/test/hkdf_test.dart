@@ -302,4 +302,15 @@ void main() {
       expect(toHex(fromHex(_dbKeyInfoHex)), toHex(utf8.encode('pf/db/1')));
     });
   });
+
+  group('HkdfSha256 · 值语义', () {
+    test('toString 固定为 HkdfSha256()：诊断输出里不含任何密钥材料', () {
+      // 这里不是形式检查：`describe()` / `toString()` 会被上层拼进诊断字符串，
+      // 而诊断字符串会进日志。HKDF 的中间量（尤其 PRK）一旦被格式化进去，
+      // 就等于把密钥写进了日志文件 —— 日志脱敏门禁只认标识符名，
+      // 认不出「一个恰好是密钥的字符串」。
+      expect(HkdfSha256.instance.toString(), 'HkdfSha256()');
+      expect(HkdfSha256.instance.toString(), isNot(contains('prk')));
+    });
+  });
 }

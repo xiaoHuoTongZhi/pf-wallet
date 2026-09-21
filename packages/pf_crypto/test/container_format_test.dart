@@ -44,6 +44,23 @@ void main() {
     test('空输入 == 0', () {
       expect(Crc32.of(Uint8List(0)), 0);
     });
+
+    test('ofHex：8 位大写十六进制，与 of 是同一个值', () {
+      final data = Uint8List.fromList(ascii.encode('123456789'));
+      expect(Crc32.ofHex(data), 'CBF43926');
+      // 前 4 字节的 CRC 一定不足 8 位有效数字 —— 这条守的是 padLeft，
+      // 不是「恰好 8 个字符」：少了补零，两个不同的 CRC 会撞成同一个字符串。
+      final short = Uint8List.fromList(<int>[0x00, 0x00, 0x00, 0x00]);
+      expect(Crc32.ofHex(short), '2144DF1C');
+      expect(Crc32.ofHex(short), hasLength(8));
+    });
+
+    test('ofHex 的 [start, end) 与 zlib.crc32 同源（期望值另算）', () {
+      // '1234' 的 CRC-32 = 0x9BE3E0A3，由 Python `zlib.crc32` 独立算出，
+      // 不是从本实现打印的 —— 否则这条只是在证明「和自己一致」。
+      final data = Uint8List.fromList(ascii.encode('123456789'));
+      expect(Crc32.ofHex(data, 0, 4), '9BE3E0A3');
+    });
   });
 
   group('PfbHeader · 编解码', () {
@@ -321,7 +338,235 @@ void main() {
       expect(opened, payload);
     });
   });
+
+  group('PfbHeader · 常量命名空间与访问器', () {
+    test('PfbAlgorithm.isKnownKdf / isKnownAead 只认已登记的 ID', () {
+      expect(PfbAlgorithm.isKnownKdf(PfbAlgorithm.kdfArgon2id), isTrue);
+      expect(PfbAlgorithm.isKnownKdf(PfbAlgorithm.kdfArgon2id + 1), isFalse);
+      expect(PfbAlgorithm.isKnownAead(PfbAlgorithm.aeadAes256Gcm), isTrue);
+      expect(PfbAlgorithm.isKnownAead(PfbAlgorithm.aeadAes256Gcm + 1), isFalse);
+    });
+
+    test('PfbFlags.of：四个可选位各自独立置位，bit0/bit2 恒置', () {
+      const base = PfbFlags.bitAesGcm | PfbFlags.bitChunked;
+      expect(PfbFlags.of(), base);
+      expect(PfbFlags.of(gzip: true), base | PfbFlags.bitGzip);
+      expect(PfbFlags.of(hasAttachments: true), base | PfbFlags.bitHasAttachments);
+      expect(PfbFlags.of(multiVolume: true), base | PfbFlags.bitMultiVolume);
+      expect(PfbFlags.of(incremental: true), base | PfbFlags.bitIncremental);
+      expect(
+        PfbFlags.of(gzip: true, hasAttachments: true, multiVolume: true, incremental: true),
+        PfbFlags.knownMask,
+      );
+    });
+
+    test('flagGzip / flagChunked / flagIncremental 与 featureFlags 逐位一致', () {
+      final plain = _rawHeader();
+      expect(plain.flagGzip, isFalse);
+      expect(plain.flagChunked, isTrue);
+      expect(plain.flagIncremental, isFalse);
+
+      final flagged = _rawHeader(featureFlags: PfbFlags.of(gzip: true, incremental: true));
+      expect(flagged.flagGzip, isTrue);
+      expect(flagged.flagChunked, isTrue);
+      expect(flagged.flagIncremental, isTrue);
+    });
+
+    test('toString 摘要含版本、flags、KDF 描述、块数与明文长', () {
+      final header = _rawHeader();
+      expect(header.toString(), startsWith('PfbHeader(v${PfbFormat.formatVersion}, flags=0x5, '));
+      expect(header.toString(), contains(_fastKdf.describe()));
+      expect(header.toString(), endsWith('chunks=0, plain=0)'));
+    });
+  });
+
+  group('PfbHeader.validate · 逐条结构校验的拒绝分支', () {
+    test('formatVersion ≤ 0 ⇒ PFB_E_HEADER_INVALID', () {
+      expect(
+        () => _rawHeader(formatVersion: 0).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+    });
+
+    test('minReaderVersion ≤ 0 ⇒ PFB_E_HEADER_INVALID', () {
+      expect(
+        () => _rawHeader(minReaderVersion: 0).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+    });
+
+    test('bit0(AESGCM) 未置位 ⇒ PFB_E_HEADER_INVALID（本格式只定义了这一种 AEAD）', () {
+      expect(
+        () => _rawHeader(featureFlags: PfbFlags.bitChunked).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+    });
+
+    test('chunkPlainSizeKiB < 1 ⇒ PFB_E_HEADER_INVALID', () {
+      expect(
+        () => _rawHeader(chunkPlainSizeKiB: 0).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+    });
+
+    test('明文长度超出 1 TiB ⇒ PFB_E_HEADER_INVALID（不让文件头驱动荒谬分配）', () {
+      expect(
+        () => _rawHeader(plaintextLength: PfbFormat.maxPlaintextLength + 1).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+    });
+
+    test('chunkCount=0 但明文非空 ⇒ PFB_E_HEADER_INVALID', () {
+      expect(
+        () => _rawHeader(plaintextLength: 100, chunkCount: 0).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+    });
+
+    test('volumeTotal 越界（0 与 maxVolumes+1）⇒ PFB_E_HEADER_INVALID', () {
+      expect(
+        () => _rawHeader(volumeTotal: 0).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+      expect(
+        () => _rawHeader(volumeTotal: PfbFormat.maxVolumes + 1).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+    });
+
+    test('volumeIndex 越界（0 / 大于 volumeTotal）⇒ PFB_E_HEADER_INVALID', () {
+      expect(
+        () => _rawHeader(volumeTotal: 1, volumeIndex: 0).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+      expect(
+        () => _rawHeader(volumeTotal: 2, volumeIndex: 3).validate(),
+        throwsA(_withCode(PfErrorCode.containerHeaderInvalid)),
+      );
+    });
+  });
+
+  group('PfbHeader.encode / decode · 长度与冗余字段的拒绝分支', () {
+    test('盐长度与声明的 kdfSaltLen 不符 ⇒ 编码期就拦下', () {
+      expect(() => _rawHeader(salt: Uint8List(8)).encode(), throwsA(_headerInvalid));
+    });
+
+    test('noncePrefix 长度 ≠ 8 ⇒ 编码期就拦下', () {
+      expect(() => _rawHeader(noncePrefix: Uint8List(4)).encode(), throwsA(_headerInvalid));
+    });
+
+    test('不足 128 字节 ⇒ PFB_E_TRUNCATED（长度不足走自己的码，不是 headerInvalid）', () {
+      expect(
+        () => PfbHeader.decode(Uint8List(PfbFormat.headerSize - 1)),
+        throwsA(_withCode(PfErrorCode.containerTruncated)),
+      );
+    });
+
+    test('firstChunkNonce 前 8 字节与 noncePrefix 不一致 ⇒ PFB_E_HEADER_INVALID', () {
+      final bytes = _rawHeader().encode();
+      BigEndian.writeBytes(
+        bytes,
+        PfbFormat.offsetFirstChunkNonce,
+        Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6, 7, 8]),
+      );
+      _fixHeaderCrc(bytes); // 先让 CRC 过，才轮得到这条冗余校验
+      expect(() => PfbHeader.decode(bytes), throwsA(_headerInvalid));
+    });
+
+    test('firstChunkNonce 末 4 字节非 0 ⇒ PFB_E_HEADER_INVALID', () {
+      final bytes = _rawHeader().encode();
+      bytes[PfbFormat.offsetFirstChunkNonce + 8] = 1;
+      _fixHeaderCrc(bytes);
+      expect(() => PfbHeader.decode(bytes), throwsA(_headerInvalid));
+    });
+  });
+
+  group('PfbLayout / PfbSlices · 布局自洽与拒绝分支', () {
+    test('fileLength == 实际文件长度（头 128 + 每块 16 开销 + 尾部 32）', () async {
+      final file = await _seal(_bytes(2500, 3), chunkPlainSizeKiB: 1);
+      final slices = PfbLayout.slice(file);
+      expect(slices.chunks, hasLength(3));
+      expect(slices.fileLength, file.length);
+    });
+
+    test('bit2(CHUNKED) 未置位 ⇒ PFB_E_HEADER_INVALID（只支持分块容器）', () {
+      final bytes = _rawHeader(featureFlags: PfbFlags.bitAesGcm).encode();
+      expect(() => PfbLayout.slice(bytes), throwsA(_headerInvalid));
+    });
+
+    test('某块 chunkLen ≤ 标签长度 ⇒ PFB_E_HEADER_INVALID', () async {
+      final file = await _seal(_bytes(100), chunkPlainSizeKiB: 1);
+      // 恰好等于 16（= tagLength）：一块连标签都装不下，只能是写坏了。
+      BigEndian.writeUint32(file, PfbFormat.headerSize, PfbFormat.tagLength);
+      expect(() => PfbLayout.slice(file), throwsA(_headerInvalid));
+    });
+
+    test('块长之和与「文件长度 = 头 + 明文 + 开销 + 尾」对不上 ⇒ PFB_E_HEADER_INVALID', () async {
+      final file = await _seal(_bytes(100), chunkPlainSizeKiB: 1);
+      // 声明 chunkLen=20（> 16，所以先过上一道），于是密文区在 164 就结束，
+      // 而文件长 292 —— 中间那 128 字节不受任何完整性保护，必须拒绝。
+      BigEndian.writeUint32(file, PfbFormat.headerSize, 20);
+      expect(() => PfbLayout.slice(file), throwsA(_headerInvalid));
+    });
+
+    test('目录里的块数与 chunkCount 一致（切片不会多读或少读）', () async {
+      final payload = _bytes(2500, 3);
+      final file = await _seal(payload, chunkPlainSizeKiB: 1);
+      final slices = PfbLayout.slice(file);
+      expect(slices.chunks.map((c) => c.index), <int>[0, 1, 2]);
+      expect(slices.chunks.fold<int>(0, (n, c) => n + c.plainLength), payload.length);
+    });
+  });
+
+  group('PfbContainer.verifyContentDigest · 长度不足', () {
+    test('不足「头部 + 尾部」⇒ PFB_E_TRUNCATED', () {
+      final tooShort = Uint8List(PfbFormat.headerSize + PfbFormat.trailerSize - 1);
+      expect(
+        () => PfbContainer.verifyContentDigest(tooShort),
+        throwsA(_withCode(PfErrorCode.containerTruncated)),
+      );
+    });
+  });
 }
+
+/// 直接构造头部（**绕过** `PfbHeader.create` 的默认值），用于逐条命中
+/// `validate()` / `encode()` 的拒绝分支。
+///
+/// 为什么必须另开这个入口：`create` 会把参数钳进合法域（例如 chunkCount 由
+/// plaintextLength 反算），于是「不自洽的头部」在测试里根本造不出来 ——
+/// 而那些分支恰恰是解析**攻击者可控的文件头**时要走的。
+PfbHeader _rawHeader({
+  int formatVersion = PfbFormat.formatVersion,
+  int minReaderVersion = PfbFormat.minReaderVersion,
+  int featureFlags = PfbFlags.bitAesGcm | PfbFlags.bitChunked,
+  Argon2Params kdf = _fastKdf,
+  int chunkPlainSizeKiB = 1,
+  int plaintextLength = 0,
+  int chunkCount = 0,
+  Uint8List? salt,
+  Uint8List? noncePrefix,
+  int volumeIndex = 1,
+  int volumeTotal = 1,
+}) => PfbHeader(
+  formatVersion: formatVersion,
+  minReaderVersion: minReaderVersion,
+  featureFlags: featureFlags,
+  kdf: kdf,
+  chunkPlainSizeKiB: chunkPlainSizeKiB,
+  plaintextLength: plaintextLength,
+  chunkCount: chunkCount,
+  salt: salt ?? Uint8List(PfbFormat.saltLength),
+  noncePrefix: noncePrefix ?? Uint8List(PfbFormat.noncePrefixLength),
+  volumeSetId: Uint8List(PfbFormat.volumeSetIdLength),
+  volumeIndex: volumeIndex,
+  volumeTotal: volumeTotal,
+  setDigest: Uint8List(PfbFormat.setDigestLength),
+);
+
+/// 改了固定头里的字段之后重算 CRC32 —— 否则会先撞 CRC 分支，
+/// 测不到真正想测的那一条。
+void _fixHeaderCrc(Uint8List bytes) =>
+    Crc32.writeInto(bytes, PfbFormat.offsetHeaderCrc32, bytes, 0, PfbFormat.offsetHeaderCrc32);
 
 /// 把第 [index] 块的 box 替换为 [newBox]（nonce 不动）。
 void _replaceBox(Uint8List file, PfbSlices slices, int index, Uint8List newBox) {
@@ -343,3 +588,7 @@ void _recomputeTrailer(Uint8List file) {
 }
 
 Matcher _withCode(String code) => isA<PfError>().having((e) => e.code, 'code', code);
+
+/// 结构损坏的统一码。绝大多数拒绝分支都归到它 —— 单独抽出来是为了让
+/// 「这一条到底该报哪个码」在用例里一眼可读。
+final Matcher _headerInvalid = _withCode(PfErrorCode.containerHeaderInvalid);

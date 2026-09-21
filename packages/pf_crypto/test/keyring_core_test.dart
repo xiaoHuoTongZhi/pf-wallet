@@ -227,6 +227,137 @@ void main() {
       await core.verifyKeyCheck(dbKey: core.deriveDbKey(masterKey: mkAgain), block: block);
     });
   });
+
+  group('密钥层 · 块结构约束（长度不对 = 被改过或写坏了）', () {
+    test('KeyCheckBlock：nonce 长度 ≠ 12 ⇒ PFK_E_TAMPERED', () {
+      expect(
+        () => KeyCheckBlock(
+          nonce: Uint8List(Aes256Gcm.defaultNonceLength - 1),
+          ciphertext: Uint8List(keyCheckPlaintext.length),
+          tag: Uint8List(Aes256Gcm.tagLengthBytes),
+          cfgVersion: walletCfgVersion,
+          installId: installId,
+        ),
+        throwsA(_tampered),
+      );
+    });
+
+    test('KeyCheckBlock：tag 长度 ≠ 16 ⇒ PFK_E_TAMPERED', () {
+      expect(
+        () => KeyCheckBlock(
+          nonce: nonce12,
+          ciphertext: Uint8List(keyCheckPlaintext.length),
+          tag: Uint8List(Aes256Gcm.tagLengthBytes - 1),
+          cfgVersion: walletCfgVersion,
+          installId: installId,
+        ),
+        throwsA(_tampered),
+      );
+    });
+
+    test('KeyCheckBlock.toJson：写进 wallet.cfg.json 的那四个字段', () async {
+      final block = await core.sealKeyCheck(
+        dbKey: core.deriveDbKey(masterKey: mk),
+        nonce: nonce12,
+        installId: installId,
+      );
+      expect(block.toJson(), <String, Object?>{
+        'nonceHex': toHex(nonce12),
+        'ciphertextHex': toHex(block.ciphertext),
+        'tagHex': toHex(block.tag),
+        'aad': block.aad,
+      });
+      // aad 是**明文**进 JSON 的：它必须能被读方独立重算出来，
+      // 否则配置文件换台设备就打不开，而失败会伪装成「密码错」。
+      expect(block.toJson()['aad'], 'pf-keycheck-v1|$walletCfgVersion|$installId');
+    });
+
+    test('RecoveryBlob：nonce / 密文 / 标签长度各自不对 ⇒ PFK_E_TAMPERED', () {
+      expect(
+        () => RecoveryBlob(
+          nonce: Uint8List(Aes256Gcm.defaultNonceLength - 1),
+          ciphertext: Uint8List(RecoveryBlob.masterKeyLength),
+          tag: Uint8List(Aes256Gcm.tagLengthBytes),
+          cfgVersion: walletCfgVersion,
+        ),
+        throwsA(_tampered),
+      );
+      // 明文是 MK（32 字节），故密文必须是 32 字节。
+      expect(
+        () => RecoveryBlob(
+          nonce: nonce12,
+          ciphertext: Uint8List(RecoveryBlob.masterKeyLength - 1),
+          tag: Uint8List(Aes256Gcm.tagLengthBytes),
+          cfgVersion: walletCfgVersion,
+        ),
+        throwsA(_tampered),
+      );
+      expect(
+        () => RecoveryBlob(
+          nonce: nonce12,
+          ciphertext: Uint8List(RecoveryBlob.masterKeyLength),
+          tag: Uint8List(Aes256Gcm.tagLengthBytes - 1),
+          cfgVersion: walletCfgVersion,
+        ),
+        throwsA(_tampered),
+      );
+    });
+
+    test('RecoveryBlob.toJson：aad 由 cfgVersion 拼出，与 keyCheck 的 AAD 不同源', () {
+      final blob = RecoveryBlob(
+        nonce: nonce12,
+        ciphertext: Uint8List(RecoveryBlob.masterKeyLength),
+        tag: Uint8List(Aes256Gcm.tagLengthBytes),
+        cfgVersion: 7,
+      );
+      expect(blob.toJson(), <String, Object?>{
+        'nonceHex': toHex(nonce12),
+        'ciphertextHex': toHex(blob.ciphertext),
+        'tagHex': toHex(blob.tag),
+        'aad': 'pf-recovery-v1|7',
+      });
+    });
+  });
+
+  group('密钥层 · 认证通过但内容被换（唯一能落到的那条防线）', () {
+    test('解开后明文 ≠ "PF:KEYCHECK:v1" ⇒ PFK_E_TAMPERED，而不是放行', () async {
+      final dbKey = core.deriveDbKey(masterKey: mk);
+      // 用**同一把密钥、同一个 nonce、同一个 AAD** 封一段等长的别的明文：
+      // GCM 认证会通过，于是「密码错」那一层被完整绕过，
+      // 只剩「解开后必须逐字节等于常量」这一条还站着。这正是它存在的理由 ——
+      // 旧版本实现若写入过别的串，必须按篡改处理，不能当成登录成功。
+      final forgedPlaintext = Uint8List.fromList(utf8.encode('PF:KEYCHECK:v2'));
+      expect(forgedPlaintext.length, keyCheckPlaintext.length);
+
+      final detached = await Aes256Gcm.instance.sealDetached(
+        key: dbKey,
+        nonce: nonce12,
+        plaintext: forgedPlaintext,
+        aad: Uint8List.fromList(
+          utf8.encode(keyCheckAad(cfgVersion: walletCfgVersion, installId: installId)),
+        ),
+      );
+      final forged = KeyCheckBlock(
+        nonce: nonce12,
+        ciphertext: detached.ciphertext,
+        tag: detached.tag,
+        cfgVersion: walletCfgVersion,
+        installId: installId,
+      );
+      await expectLater(core.verifyKeyCheck(dbKey: dbKey, block: forged), throwsA(_tampered));
+    });
+
+    test('wrapMasterKeyForRecovery：MK 长度 ≠ 32 ⇒ validation（调用方 bug）', () async {
+      await expectLater(
+        core.wrapMasterKeyForRecovery(
+          recoveryKey: Uint8List(32),
+          masterKey: Uint8List(RecoveryBlob.masterKeyLength - 1),
+          nonce: nonce12,
+        ),
+        throwsA(isA<DomainError>().having((e) => e.code, 'code', PfErrorCode.validation)),
+      );
+    });
+  });
 }
 
 // ---- 向量数值（与 test_vectors/v1/keyring.json 同源，Python 独立复算） ----
@@ -234,3 +365,11 @@ void main() {
 const String _mk2Hex = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
 
 const String _dbKeyHex = '30e0382aab4f7051e1ed5e9406a2fdfd9a372d63b58f1e9a74794dc2538e113d';
+
+/// 结构损坏 / 内容被换的统一码。密钥层不需要把这两种再分开 ——
+/// 对调用方而言「这个块不可信」是同一个动作：拒绝并走恢复通路。
+final Matcher _tampered = isA<KeyringError>().having(
+  (e) => e.code,
+  'code',
+  PfErrorCode.keyringTampered,
+);

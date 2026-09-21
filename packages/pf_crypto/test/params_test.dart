@@ -165,6 +165,33 @@ void main() {
     });
   });
 
+  group('Argon2Params · 值语义（== / hashCode / toString）', () {
+    test('toString 复用 describe()，与设置页、日志同一份措辞', () {
+      expect(Argon2Params.mobileDefault.toString(), 'Argon2Params(m=64MiB t=3 p=1)');
+      expect(
+        Argon2Params.presetMin.toString(),
+        'Argon2Params(${Argon2Params.presetMin.describe()})',
+      );
+    });
+
+    test('参数相同 ⇒ == 为真且 hashCode 相等（可安全放进 Set / Map 键）', () {
+      final roundTripped = Argon2Params.fromJson(Argon2Params.mobileDefault.toJson());
+      expect(roundTripped, Argon2Params.mobileDefault);
+      expect(roundTripped.hashCode, Argon2Params.mobileDefault.hashCode);
+      expect(<Argon2Params>{Argon2Params.mobileDefault, roundTripped}, hasLength(1));
+    });
+
+    test('参数不同 ⇒ hashCode 不同（当前六个预设两两不同）', () {
+      final presets = <Argon2Params>{
+        Argon2Params.mobileDefault,
+        Argon2Params.desktopDefault,
+        Argon2Params.presetMin,
+      };
+      expect(presets, hasLength(3));
+      expect(Argon2Params.mobileDefault.hashCode, isNot(Argon2Params.desktopDefault.hashCode));
+    });
+  });
+
   group('WrappedKey / KeyringData 序列化', () {
     WrappedKey buildWrapped() => WrappedKey(
       params: Argon2Params.mobileDefault,
@@ -232,6 +259,53 @@ void main() {
       expect(
         () => KeyringData.fromJson(data),
         throwsA(isA<StorageError>().having((e) => e.code, 'code', PfErrorCode.storageSchemaTooNew)),
+      );
+    });
+
+    test('WrappedKey.toString：只有 KDF 描述与各段长度，不含任何密钥字节', () {
+      final text = buildWrapped().toString();
+      expect(text, 'WrappedKey(m=64MiB t=3 p=1, salt=16B, ciphertext=32B)');
+      // 这条才是重点：诊断输出进日志，日志会进用户随手贴出来的截图。
+      // 长度可以露，字节不行 —— toString 里出现密文十六进制就是一次事故。
+      expect(text, isNot(contains(toHex(buildWrapped().ciphertext))));
+      expect(text, isNot(contains(toHex(buildWrapped().salt))));
+    });
+
+    test('KeyringData 的两个时间戳都是 UTC（口径必须一致，否则跨时区比较出错）', () {
+      final data = KeyringData(
+        version: keyringFormatVersion,
+        primary: buildWrapped(),
+        recovery: null,
+        createdAtMilliseconds: 1735689600000,
+        updatedAtMilliseconds: 1735776000000,
+      );
+      expect(data.createdAt.isUtc, isTrue);
+      expect(data.updatedAt.isUtc, isTrue);
+      expect(data.updatedAt, DateTime.fromMillisecondsSinceEpoch(1735776000000, isUtc: true));
+      expect(
+        data.updatedAt.difference(data.createdAt),
+        const Duration(days: 1),
+        reason: '两个字段单位相同（毫秒），否则差值是 1000 倍',
+      );
+    });
+
+    test('KeyringData 缺字段或类型不对 → PFK_E_TAMPERED', () {
+      expect(
+        () => KeyringData.fromJson(<String, Object?>{
+          'version': '1',
+          'primary': <String, Object?>{},
+          'createdAt': 0,
+          'updatedAt': 0,
+        }),
+        throwsA(isA<KeyringError>().having((e) => e.code, 'code', PfErrorCode.keyringTampered)),
+      );
+      expect(
+        () => KeyringData.fromJson(<String, Object?>{
+          'version': keyringFormatVersion,
+          'primary': <String, Object?>{},
+          'createdAt': 0,
+        }),
+        throwsA(isA<KeyringError>().having((e) => e.code, 'code', PfErrorCode.keyringTampered)),
       );
     });
   });

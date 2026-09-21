@@ -123,4 +123,15 @@ void main() {
       expect(verdict.computedHex, computed);
     });
   });
+
+  group('Sha256 · 值语义', () {
+    test('toString 固定为 Sha256()：诊断输出里不含任何内部状态', () {
+      expect(Sha256.instance.toString(), 'Sha256()');
+    });
+
+    test('instance 是 const 单例（无状态，可跨 isolate 复用同一份契约）', () {
+      // ignore: use_named_constants  换成 Sha256.instance 就成了同义反复，测不到规范化
+      expect(identical(const Sha256(), Sha256.instance), isTrue);
+    });
+  });
 }

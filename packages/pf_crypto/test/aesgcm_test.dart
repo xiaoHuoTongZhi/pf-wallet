@@ -501,4 +501,41 @@ void main() {
       }
     });
   });
+
+  group('Aes256Gcm · 合并接口 seal（容器不用它，但契约必须成立）', () {
+    test('seal 的密文与 sealDetached 逐字节相同 —— 底层只有一套实现', () async {
+      final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
+      final nonce = Uint8List.fromList(List<int>.generate(12, (i) => 0x30 + i));
+      final plaintext = Uint8List.fromList(List<int>.generate(37, (i) => i));
+      final aad = Uint8List.fromList(<int>[0xAA, 0xBB]);
+
+      final combined = await Aes256Gcm.instance.seal(
+        key: key,
+        nonce: nonce,
+        plaintext: plaintext,
+        aad: aad,
+      );
+      final detached = await Aes256Gcm.instance.sealDetached(
+        key: key,
+        nonce: nonce,
+        plaintext: plaintext,
+        aad: aad,
+      );
+
+      expect(combined, detached.ciphertext, reason: 'seal 只是丢掉标签，不是另一条加密路径');
+      expect(combined, hasLength(plaintext.length), reason: 'GCM 是流式，密文与明文等长');
+    });
+
+    test('seal 也守输入契约：key 长度不对照样拒绝', () async {
+      await expectLater(
+        Aes256Gcm.instance.seal(
+          key: Uint8List(Aes256Gcm.keyLengthBytes - 1),
+          nonce: Uint8List(Aes256Gcm.defaultNonceLength),
+          plaintext: Uint8List(8),
+          aad: Uint8List(0),
+        ),
+        throwsA(isA<PfError>().having((e) => e.code, 'code', PfErrorCode.containerHeaderInvalid)),
+      );
+    });
+  });
 }
