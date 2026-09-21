@@ -2,7 +2,7 @@
 ///
 /// 字节级断言由 `export_payload` 向量（Python 独立实现）负责；
 /// 这里守行为边界：行序契约、contentHash 注入与防伪造、
-/// scope 校验、以及不可序列化值的拒绝。
+/// scope 校验、判别键独占、以及不可序列化值的拒绝。
 library;
 
 import 'dart:convert';
@@ -170,6 +170,52 @@ void main() {
         ),
         throwsA(isA<DomainError>()),
       );
+    });
+  });
+
+  group('PfbPayloadEncoder.encode · 判别键独占（2026-09-21 裁决）', () {
+    test('记录字段携带判别键 → 拒绝，而不是静默覆盖', () {
+      // 这条锁的是一个**真实发生过**的事故：`{'type': stage, ...fields}` 里
+      // fields 写在后面，于是 account.type / txn.type 把判别键抹掉了，
+      // 产出 `{"type":2,"id":"…C1","name":"招行储蓄卡",…}` —— 判别键消失。
+      // 导入侧对它的两种解析都是错的（认不出类型 / 读不到 type 字段），
+      // 而字节本身完全合法，所以**没有任何现有断言会发现它**。
+      //
+      // 拒绝而非覆盖：静默覆盖正是这次事故的根因。
+      expect(
+        () => PfbPayloadEncoder.encode(
+          manifest: _manifest(),
+          stages: const <String, List<Map<String, Object?>>>{
+            'account': <Map<String, Object?>>[
+              <String, Object?>{'id': 'a1', 'type': 2},
+            ],
+          },
+          generatedAtMilliseconds: 0,
+        ),
+        throwsA(isA<DomainError>().having((e) => e.code, 'code', PfErrorCode.validation)),
+      );
+    });
+
+    test('业务列改名后，判别键与实际值都能被解析回来', () {
+      final result = PfbPayloadEncoder.encode(
+        manifest: _manifest(),
+        stages: const <String, List<Map<String, Object?>>>{
+          'account': <Map<String, Object?>>[
+            <String, Object?>{'id': 'a1', 'accountType': 2},
+          ],
+          'txn': <Map<String, Object?>>[
+            <String, Object?>{'id': 't1', 'txnType': 3},
+          ],
+        },
+        generatedAtMilliseconds: 0,
+      );
+      final lines = _parseLines(result.ndjsonBytes);
+      expect(lines[1]['type'], 'account');
+      expect(lines[1]['accountType'], 2);
+      expect(lines[2]['type'], 'txn');
+      expect(lines[2]['txnType'], 3);
+      // 判别键不得被复制成业务列：改名后的行里只能有一个 type。
+      expect(lines[1].keys.where((k) => k == kPayloadDiscriminatorKey).length, 1);
     });
   });
 }

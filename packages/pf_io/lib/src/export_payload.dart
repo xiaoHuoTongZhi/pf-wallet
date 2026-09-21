@@ -18,6 +18,10 @@
 ///      与实际累计值比对。
 ///   3. **manifest 的 contentHash 由本编码器注入**。调用方给的 manifest 若已
 ///      含该键一律拒绝 —— 允许传入等于允许伪造。
+///   4. **判别键 `type` 在记录行里独占**（2026-09-21 裁决，见
+///      [kPayloadDiscriminatorKey]）。业务列在载荷层改名：
+///      `account.type → accountType`、`txn.type → txnType`。
+///      记录字段携带 `type` 一律 `PFC_E_VALIDATION` 拒绝。
 library;
 
 import 'dart:convert';
@@ -45,6 +49,23 @@ const List<String> kPayloadStageOrder = <String>[
 
 /// manifest.exportKind 的合法取值（§3.2）。
 const Set<String> kPayloadExportKinds = <String>{'full', 'range', 'ledger', 'incremental'};
+
+/// 记录行的判别键（§4.1）。
+///
+/// 判别键在载荷里**必须独占**：任何业务字段都不得叫这个名字。
+/// 2026-09-21 裁决的由来 —— §4.1 原文的 account 与 txn 行示例里
+/// `type` 出现了两次（判别键 `"account"` 与业务列 `account.type=2`），
+/// 而 JSON 对象重复键在 RFC 8259 下行为未定义、实际实现一律取末次。
+/// 结果是编码器的 `{'type': stage, ...fields}` 被业务字段反向覆盖：
+///
+///     {"type":2,"id":"…C1","name":"招行储蓄卡",…}   ← 判别键消失
+///
+/// 这一行在导入侧既是「未知类型」也是「缺少 type」，两种解析都错。
+/// 因此业务列在载荷层的键改名为 `accountType` / `txnType`
+/// （只改载荷键，DB 列名不动），并由 [PfbPayloadEncoder.encode] 拒绝
+/// 任何携带判别键的记录字段 —— 静默覆盖是这次事故的根因，
+/// 换个写法悄悄复现比直接报错危险得多。
+const String kPayloadDiscriminatorKey = 'type';
 
 /// 载荷格式版本（与容器 formatVersion 独立演进，§3.2）。
 const int kPayloadVersion = 1;
@@ -96,7 +117,19 @@ abstract final class PfbPayloadEncoder {
     for (final stage in kPayloadStageOrder) {
       final rows = stages[stage] ?? const <Map<String, Object?>>[];
       for (final fields in rows) {
-        records.add(_encodeLine(<String, Object?>{'type': stage, ...fields}));
+        // 判别键必须独占（见 [kPayloadDiscriminatorKey]）。这里刻意用
+        // 「拒绝」而不是「覆盖后继续」：`{...fields}` 写在后面会把判别键
+        // 抹掉，产出一个**看起来正常、导入侧认不出类型**的载荷 ——
+        // 让它在编码期就失败，比让它在半年后的一次真实导入里暴露便宜得多。
+        if (fields.containsKey(kPayloadDiscriminatorKey)) {
+          throw DomainError.validation(
+            detail:
+                '阶段 $stage 的记录字段不得包含判别键 "$kPayloadDiscriminatorKey"：'
+                '它会覆盖行类型。业务列请在载荷层改名（如 accountType / txnType）',
+            userMessage: '导出数据内部不一致，已中止。',
+          );
+        }
+        records.add(_encodeLine(<String, Object?>{kPayloadDiscriminatorKey: stage, ...fields}));
         recordCount++;
       }
     }
@@ -112,7 +145,7 @@ abstract final class PfbPayloadEncoder {
 
     // 3. end 行。
     final endLine = _encodeLine(<String, Object?>{
-      'type': 'end',
+      kPayloadDiscriminatorKey: 'end',
       'recordCount': recordCount,
       'contentHash': 'sha256:$contentHashHex',
       'generatedAt': generatedAtMilliseconds,
@@ -131,7 +164,7 @@ abstract final class PfbPayloadEncoder {
   }
 
   static void _validateManifest(Map<String, Object?> manifest) {
-    if (manifest['type'] != 'manifest') {
+    if (manifest[kPayloadDiscriminatorKey] != 'manifest') {
       throw DomainError.validation(detail: 'manifest 行的 type 必须是 manifest');
     }
     if (manifest.containsKey('contentHash')) {
