@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "rationale": "CI 与本机要跑一套真实的加密数据库，而 SQLCipher 不是 SQLite 发行版的一部分。本清单把『用哪个库』钉成两份字节：一个必须是 SQLCipher（正向用例），一个必须是纯 SQLite（反向用例）。两份都来自同一个上游、同一个版本号，因此三平台上的引擎身份是可比的 —— 而不是 Linux 用 apt 装到 4.6、macOS 用 brew 装到 4.5、Windows 什么都没有。",
+  "rejected": [
+    {
+      "candidate": "sqlite.org 官方 sqlite-dll-win-x64-*.zip",
+      "why": "它是最『官方』的那个 sqlite3.dll，也正是最容易被顺手拿来的那个 —— 但它没有加密层：PRAGMA cipher_version 返回 0 行。用它当 SQLCipher 会让 init 写出明文库，所以它在本仓的定位只能是**反向候选**。"
+    },
+    {
+      "candidate": "C:\\Windows\\System32\\winsqlite3.dll",
+      "why": "随 Windows 分发（3.51.1），package:sqlite3 在找不到 sqlite3.dll 时会自动回退到它。实测同样对 cipher_* PRAGMA 静默成功、cipher_version 为 0 行 —— 这就是自检必须存在的理由。"
+    },
+    {
+      "candidate": "pypi sqlcipher3-wheels 的 win_amd64 轮子",
+      "why": "轮子里的 _sqlite3.cp313-win_amd64.pyd 确实静态链接了 SQLCipher 4，但它只导出 PyInit__sqlite3：ctypes 实测 17 个 sqlite3_* 符号命中 0 个，无法被 DynamicLibrary.open 使用。"
+    },
+    {
+      "candidate": "Zetetic 商业版 SQLCipher for Windows",
+      "why": "需要购买与许可，且下载入口在登录之后；不能进 CI。"
+    },
+    {
+      "candidate": "vcpkg / MSYS2 / conda 自行构建",
+      "why": "可用但代价不成比例：构建 OpenSSL + SQLCipher 在 Windows 上是十几分钟起步，而这一步的产物（一个能用的库）用现成预编译件同样能拿到。真需要与移动端完全同源的构建时再回来。"
+    }
+  ],
+  "source": {
+    "host": "api.nuget.org",
+    "urlTemplate": "https://api.nuget.org/v3-flatcontainer/{package}/{version}/{package}.{version}.nupkg",
+    "note": "nuget.org 的扁平容器：版本一旦发布不可覆盖，URL 里的包名与版本都是小写。"
+  },
+  "artifacts": {
+    "sqlcipher": {
+      "package": "sqlitepclraw.lib.e_sqlcipher",
+      "version": "2.1.11",
+      "kind": "sqlcipher",
+      "nupkgBytes": 21094009,
+      "nupkgSha256": "461ef5dd142784b44b22662f853dd5de7a2d28e9c98e0165f26733d81a355696",
+      "identity": "cipher_version = 4.5.2 community（SQLite 3.39.2）",
+      "members": {
+        "win-x64": {
+          "path": "runtimes/win-x64/native/e_sqlcipher.dll",
+          "bytes": 1852928,
+          "sha256": "895c0f5203352446f159d7780021b69b280dec6347c434c7a643ad6b7d0d883b"
+        },
+        "win-arm64": {
+          "path": "runtimes/win-arm64/native/e_sqlcipher.dll",
+          "bytes": 1633280,
+          "sha256": "489d23739865b4d5ab9c46d471893c24e321215c8a5e80d2447fd39bd032c2a6"
+        },
+        "linux-x64": {
+          "path": "runtimes/linux-x64/native/libe_sqlcipher.so",
+          "bytes": 1368960,
+          "sha256": "0e948f782bcb68ceaab4f89f16d57b603ac7377ed24af71cf047314809f22dc7"
+        },
+        "linux-arm64": {
+          "path": "runtimes/linux-arm64/native/libe_sqlcipher.so",
+          "bytes": 1411264,
+          "sha256": "8fc01c72132e968be4c6b7094a9f3ad5dfc29650e598b6282f219c1c1a3c5c61"
+        },
+        "osx-x64": {
+          "path": "runtimes/osx-x64/native/libe_sqlcipher.dylib",
+          "bytes": 1581080,
+          "sha256": "154d31cd17f4a6949aa615a6b50f38135f888242e790a74d8b5f5cc5da70654b"
+        },
+        "osx-arm64": {
+          "path": "runtimes/osx-arm64/native/libe_sqlcipher.dylib",
+          "bytes": 1544008,
+          "sha256": "8b9b73ba4f717366f9d5e655859a28c6a185ed24f16f1b77981b60d06f43f51b"
+        }
+      }
+    },
+    "plain": {
+      "package": "sqlitepclraw.lib.e_sqlite3",
+      "version": "2.1.11",
+      "kind": "plain-sqlite",
+      "nupkgBytes": 20981758,
+      "nupkgSha256": "6667df6c73609cb51db0f6e29229440228715e5d4c79d2014355f3b7ddb6e81c",
+      "identity": "sqlite3_libversion = 3.49.1，cipher_version 为 0 行",
+      "members": {
+        "win-x64": {
+          "path": "runtimes/win-x64/native/e_sqlite3.dll",
+          "bytes": 1795072,
+          "sha256": "4dcbb2ad197d893355efa004257e048f2c850feb1078158f4baab0f7b53ac45f"
+        },
+        "win-arm64": {
+          "path": "runtimes/win-arm64/native/e_sqlite3.dll",
+          "bytes": 1592320,
+          "sha256": "d28ff71188b00e30489bb7bef15dd2ebc2fded92fd9cd8af97ce222d5cfa4c61"
+        },
+        "linux-x64": {
+          "path": "runtimes/linux-x64/native/libe_sqlite3.so",
+          "bytes": 1348440,
+          "sha256": "965400c23fde16a19d000c1c6062af577f048410f85253a793f569d5520daaad"
+        },
+        "linux-arm64": {
+          "path": "runtimes/linux-arm64/native/libe_sqlite3.so",
+          "bytes": 1374696,
+          "sha256": "3d73c00244173f89bd264d9605e7753ffef8336f487b4ff059ef027261c5d623"
+        },
+        "osx-x64": {
+          "path": "runtimes/osx-x64/native/libe_sqlite3.dylib",
+          "bytes": 1591680,
+          "sha256": "858192f4089b1e643a8b972100e71e17fb83dea0c352d9f161684f6dcb69034a"
+        },
+        "osx-arm64": {
+          "path": "runtimes/osx-arm64/native/libe_sqlite3.dylib",
+          "bytes": 1554624,
+          "sha256": "bea557311c6ef51eb6a69834dbd7a4e1ebd9d3654790cf311d942bf6a6ade0a2"
+        }
+      }
+    }
+  }
+}

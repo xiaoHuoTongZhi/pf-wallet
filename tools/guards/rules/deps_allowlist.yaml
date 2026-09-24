@@ -63,6 +63,24 @@ entries:
     owner: "@owner"
     reviewBy: "2027-03-15"
 
+  - package: sqlite3
+    usedBy: [pf_cli, pf_data]
+    justification: >-
+      SQLCipher 的 Dart FFI 绑定层（应用与命令行共用的唯一数据库入口）。
+      移动端那条路（sqflite_sqlcipher）走 Flutter platform channel，
+      在纯 Dart 的 pf_cli 与 Linux CI 上都拿不到句柄；而 sqlcipher_flutter_libs
+      只把原生库塞进 Flutter 插件目录，命令行进程无力加载。
+      package:sqlite3 只做「把 dart:ffi 调用翻译成 sqlite3_* 符号」这一件事，
+      原生库由我们按 sha256 钉死的定版构建提供（见 tools/ci/native/engine_vendor.json），
+      因此它引不引入任何第三方原生二进制、也决定不了用哪个 SQLCipher。
+      替代方案 sqlite3_flutter_libs 需要挂 Flutter 引擎，CLI 侧不可用，故弃。
+    dataFlow: >-
+      仅在本机进程内访问应用私有目录下的 pf_wallet.db（AES-256 密文）。
+      解密密钥经 PRAGMA key 传入内存，不落盘、不进日志、不写任何缓存文件。
+      不发起任何网络请求（依赖树内无 HTTP 客户端；no-network-client 规则亦覆盖本包）。
+    owner: "@owner"
+    reviewBy: "2027-03-15"
+
   - package: file_picker
     usedBy: [pf_io]
     justification: >-

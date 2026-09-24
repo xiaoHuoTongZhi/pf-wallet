@@ -9,4 +9,8 @@ export 'src/migration.dart';
 export 'src/migration_runner.dart';
 export 'src/open_flow.dart';
 export 'src/schema_v1.dart';
+export 'src/sqlite3/db.dart';
+export 'src/sqlite3/engine.dart';
+export 'src/sqlite3/engine_verdict.dart';
+export 'src/sqlite3/session.dart';
 export 'src/txn_repository.dart';

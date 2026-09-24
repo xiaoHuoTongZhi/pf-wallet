@@ -79,6 +79,21 @@ scripts:
     description: 全包测试并产出 coverage/lcov.info
     run: melos exec --fail-fast --dir-exists=test -- flutter test --coverage
 
+  # ---------- 原生数据库引擎（SQLCipher 定版库）----------
+  #
+  # 「取件」是整条链上**唯一联网**的环节：它把一次网络访问换成一份被
+  # sha256 钉死的字节（清单见 tools/ci/native/engine_vendor.json），
+  # 于是探针、单测、命令行全都变成离线的、可复现的。
+  #
+  # 产物落在 build/native/engine/<runtime>/（不入库 —— build/ 在 .gitignore
+  # 与 tracked_paths 的 deny 名单里），落盘清单是 engine_paths.json。
+  #
+  # 只有需要 SQLCipher 的环节才需要它，所以**不做成 test 的前置** ——
+  # 但 `melos run ci:gate2` 需要先跑一次它（CI 里由 gate2 的取件步骤承担）。
+  engine:fetch:
+    description: 取用定版原生库（SQLCipher + 纯 SQLite 反例），校验 sha256 并落盘到 build/native/engine/
+    run: dart run tools/pf_cli/bin/fetch_engine.dart
+
   # ---------- 黄金测试向量 ----------
   vectors:
     description: 跑全部黄金向量，产出 build/vectors/report.json

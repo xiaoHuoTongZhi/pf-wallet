@@ -104,6 +104,53 @@ jobs:
       - name: 解析工作区依赖
         run: flutter pub get
 
+      # ---------------------------------------------------------------------
+      # 原生数据库引擎：取件（唯一联网的一步）+ 身份自检（三平台）
+      # ---------------------------------------------------------------------
+      # 为什么必须在跑测试**之前**：
+      #
+      #   pf_data / pf_cli 里有一组用例要真加载 SQLCipher 才能回答
+      #   「打开的是不是加密引擎」。而这些库**不入库**（`build/` 在
+      #   .gitignore 与 tracked_paths 的 deny 名单里），只能在 CI 里现取。
+      #   取件脚本把「一次网络访问」换成「一份被 sha256 钉死的字节」
+      #   （见 tools/ci/native/engine_vendor.json），此后每一步都是离线的。
+      #
+      # 为什么自检要单独占一步、而不是只看测试的退出码：
+      #
+      #   纯 SQLite **对全部 `cipher_*` PRAGMA 都返回成功** —— 不报错、
+      #   不警告，然后写出一份明文库文件。也就是说"命令跑通了"这个信号
+      #   在这里没有信息量。这一步把三平台各自的结论**打成人能读的一行**
+      #   （库路径、sqlite 版本、cipher 身份串），出错现场只有一次机会。
+      #
+      #   断言强度：正例必须 exit 0（等价于 cipher_version 非空 ——
+      #   空就返回 2）；反例必须 exit 2（纯 SQLite 被拦下）。
+      #   完整的断言集在 tools/pf_cli/test/engine_*_test.dart。
+      # ---------------------------------------------------------------------
+      - name: 取用定版原生库（SQLCipher + 纯 SQLite 反例）
+        shell: bash
+        run: dart run tools/pf_cli/bin/fetch_engine.dart
+
+      - name: 引擎身份自检（${{ matrix.os }}）
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LIB="$(dart run tools/pf_cli/bin/fetch_engine.dart --artifact sqlcipher --print-path | tail -n 1)"
+          echo "正例 · 定版 SQLCipher：$LIB"
+          dart run tools/pf_cli/bin/pf.dart engine --engine-lib "$LIB"
+
+          PLAIN="$(dart run tools/pf_cli/bin/fetch_engine.dart --artifact plain --print-path | tail -n 1)"
+          echo "反例 · 定版纯 SQLite：$PLAIN"
+          set +e
+          dart run tools/pf_cli/bin/pf.dart engine --engine-lib "$PLAIN"
+          code=$?
+          set -e
+          if [ "$code" != "2" ]; then
+            echo "::error::纯 SQLite 没有被拦下（退出码 $code，期望 2）。它会把 cipher_* PRAGMA 静默接受，然后写出明文库。"
+            exit 1
+          fi
+          echo "反例已按预期拦下（exit 2）"
+
       # 全包测试并产出 coverage/lcov.info。
       # 覆盖率不设阈值门禁 —— 阈值只会催生「为凑数而写的断言」。
       # 它的用途是 review 时看「这次改动碰的位置有没有测试」，由人判断。

@@ -10,9 +10,12 @@
 /// **不允许反向依赖**（工具包被产品代码引用会让发布的产物里多出一个 CLI）。
 library;
 
+export 'commands/engine.dart';
 export 'commands/info.dart';
 export 'commands/info_records.dart';
 export 'commands/verify.dart';
+export 'engine_fetch.dart';
+export 'engine_paths.dart';
 export 'exit_codes.dart';
 export 'file_source.dart';
 export 'password.dart';
@@ -20,3 +23,4 @@ export 'records.dart';
 export 'reporter.dart';
 export 'runner.dart';
 export 'status.dart';
+export 'zip.dart';

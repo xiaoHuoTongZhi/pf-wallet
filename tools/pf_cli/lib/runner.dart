@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:args/args.dart';
 import 'package:pf_core/pf_core.dart';
+import 'package:pf_data/pf_data.dart';
 
+import 'commands/engine.dart';
 import 'commands/info.dart';
 import 'commands/info_records.dart';
 import 'commands/verify.dart';
@@ -75,11 +77,22 @@ Future<int> runPf(
   final reporter = CliReporter(out: out, json: results.flag('json') || command.flag('json'));
   final file = command.rest.isEmpty ? null : command.rest.first;
   final reader = readBytes ?? readFileBytes;
+  final env = environment ?? Platform.environment;
 
   // `ArgResults.name` 是可空的（只有根结果没有名字），而走到这里一定是子命令。
   final name = command.name!;
 
   switch (name) {
+    case 'engine':
+      return runEngine(
+        // 优先命令行，其次环境变量。**没有第三档默认值** ——
+        // 缺省时交给 package:sqlite3 的平台默认选择（那是纯 SQLite），
+        // 而自检会因此以 PFD_E_ENGINE_NOT_CIPHER 失败。
+        // 这正是我们要的行为：少给一个库，命令必须响，而不是悄悄写明文。
+        libraryPath: command.option('engine-lib') ?? _envOrNull(env, kSqlCipherLibraryEnvVar),
+        reporter: reporter,
+        err: err,
+      );
     case 'info':
       // `--records` 走另一条路径，且**不经 reporter**：它产出的是给 diff 用的
       // 规范文本，不是人读行、也不是 NDJSON（理由见 commands/info_records.dart）。
@@ -93,7 +106,7 @@ Future<int> runPf(
           err: err,
           readBytes: reader,
           writeText: writeText ?? writeTextFile,
-          environment: environment ?? Platform.environment,
+          environment: env,
         );
       }
       return runInfo(file: file, reporter: reporter, err: err, readBytes: reader);
@@ -105,7 +118,7 @@ Future<int> runPf(
         reporter: reporter,
         err: err,
         readBytes: reader,
-        environment: environment ?? Platform.environment,
+        environment: env,
       );
   }
 
@@ -113,6 +126,17 @@ Future<int> runPf(
   // 却忘了加进 switch」表现为一个明确的错误码，而不是静默返回 0。
   err.writeln('未知子命令：$name');
   return ExitCodes.toolError;
+}
+
+/// 取环境变量的值，缺失或空串都算「没给」。
+///
+/// 空串要被当成"没给"：`PF_SQLCIPHER_LIB=` 这种写法（例如 CI 里某个变量
+/// 展开成了空）如果被当作有效路径传下去，`DynamicLibrary.open('')` 会给出
+/// 一个与"没配"完全不同的报错，把排查引向错误方向。
+String? _envOrNull(Map<String, String> environment, String name) {
+  final value = environment[name];
+  if (value == null || value.isEmpty) return null;
+  return value;
 }
 
 ArgParser _buildParser() {
@@ -123,6 +147,19 @@ ArgParser _buildParser() {
         ..addFlag('json', negatable: false, help: 'stdout 输出 NDJSON，末行固定为结果行');
 
   parser
+    ..addCommand(
+      'engine',
+      ArgParser()
+        ..addFlag('json', negatable: false, help: '同全局 --json')
+        ..addFlag('help', abbr: 'h', negatable: false, help: '显示本子命令的帮助')
+        ..addOption(
+          'engine-lib',
+          help:
+              'SQLCipher 动态库的完整路径。缺省读环境变量 $kSqlCipherLibraryEnvVar；'
+              '两者都没有时交给 package:sqlite3 的平台默认选择 —— '
+              '那是**纯 SQLite**，自检会因此在写盘之前失败。',
+        ),
+    )
     ..addCommand(
       'info',
       ArgParser()
@@ -174,6 +211,11 @@ pf —— PF Wallet 命令行工具
   pf <命令> <文件> [选项]
 
 命令：
+  engine  [--engine-lib <so>]  原生数据库引擎的身份自检：能不能打开、
+                              打开的是不是 SQLCipher。**不需要任何文件。**
+                              所有需要 SQLCipher 的命令都应当先过这一关 ——
+                              纯 SQLite 会把 cipher_* PRAGMA 静默接受，
+                              然后写出一份明文库文件。
   info    <file>              不解密读出容器头部：格式版本、KDF 参数、块数、
                               明文长度、内容摘要判定。**不需要密码。**
   info    <file> --records    四层规范报告（文件字节 / 压缩载荷 / 记录行 /

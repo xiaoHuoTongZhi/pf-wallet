@@ -14,5 +14,19 @@ dependencies:
   pf_core: ^0.1.0
   pf_crypto: ^0.1.0
 
+  # SQLCipher 原生库的 Dart 侧绑定（FFI，纯 Dart，无插件、无 Flutter）。
+  #
+  # 为什么是它而不是 sqflite_sqlcipher：本仓有两条数据库路径 ——
+  #   移动端（M2）用 sqflite_sqlcipher（Flutter 插件，带各平台预编译库）；
+  #   桌面/CI/命令行（M1 起）用 sqlite3 + 自行提供的动态库。
+  # 后者必须能被纯 Dart 进程（`pf` 命令行、`dart test`）打开，
+  # 而 Flutter 插件在纯 Dart 进程里根本加载不了。
+  #
+  # 版本上限钉在 2.x：3.0 起要求 Dart ^3.9.999，本仓由 .flutter-version
+  # 钉住的 Flutter 3.29.0 自带 Dart 3.7.0，解析会失败。
+  # 2.x 的 6 个传递依赖（collection / ffi / meta / path / typed_data / web）
+  # 全部已在 lock 里，因此本条目只向依赖树新增一个包。
+  sqlite3: ^2.9.4
+
 dev_dependencies:
   test: ^1.25.0

@@ -78,6 +78,18 @@ abstract final class PfErrorCode {
   /// 数据库 schema 版本高于本实现。
   static const String storageSchemaTooNew = 'PFD_E_SCHEMA_TOO_NEW';
 
+  /// 原生数据库引擎不可用：动态库找不到、加载失败，或缺少必需符号。
+  static const String storageEngineUnavailable = 'PFD_E_ENGINE_UNAVAILABLE';
+
+  /// 加载到的原生库能打开、能执行 SQL，但**不是 SQLCipher**。
+  ///
+  /// 这个码单独存在，是因为它拦下的是一类**不报错的**事故：
+  /// 纯 SQLite 会静默接受全部 `cipher_*` PRAGMA（返回 0 行、不抛错），
+  /// 于是"加密参数设置成功"的假象一直保持到写盘 ——
+  /// 而写出来的文件头是 `SQLite format 3\0`，是**明文**。
+  /// 靠"有没有报错"判断在这种情况下必然漏判，只能靠引擎身份自检。
+  static const String storageEngineNotCipher = 'PFD_E_ENGINE_NOT_CIPHER';
+
   // ---- PFI：导入导出 ----
   /// 合并时存在需要用户裁决的冲突。
   static const String ioConflict = 'PFI_E_CONFLICT';
@@ -327,6 +339,29 @@ final class StorageError extends PfError {
     code: PfErrorCode.storageSchemaTooNew,
     message: '数据库 schema v$found 高于本实现支持的 v$supported',
     userMessage: '本地数据由更新版本的应用创建。请先升级应用，不要降级使用。',
+  );
+
+  /// 原生数据库引擎不可用。
+  ///
+  /// [detail] 必须写清**卡在哪一步**（找不到库 / dlopen 失败 / 缺符号），
+  /// 因为这三者的处置完全不同：装库、修路径、换构建。
+  static StorageError engineUnavailable({required String detail, Object? cause}) => StorageError(
+    code: PfErrorCode.storageEngineUnavailable,
+    message: '原生数据库引擎不可用：$detail',
+    userMessage: '本地数据库引擎无法加载，账本暂时打不开。这不是密码或数据的问题，请重装应用后再试。',
+    cause: cause,
+  );
+
+  /// 加载到的库不是 SQLCipher。
+  ///
+  /// [detail] 要带上**判定依据**（`PRAGMA cipher_version` 的行数），
+  /// 因为这条错误的排查方式与平台强相关，而报错现场在 CI 日志里只有一次机会。
+  static StorageError engineNotCipher({required String detail}) => StorageError(
+    code: PfErrorCode.storageEngineNotCipher,
+    message: '加载到的原生库不是 SQLCipher：$detail',
+    userMessage:
+        '本地数据库引擎版本不正确，为避免写入未加密的数据，已停止操作。'
+        '你的数据没有被修改。请重装应用后再试。',
   );
 }
 

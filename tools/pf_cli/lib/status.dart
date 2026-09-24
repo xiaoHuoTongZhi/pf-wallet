@@ -28,5 +28,10 @@ String statusOfCode(String code) => switch (code) {
   PfErrorCode.ioVolumeIncomplete => 'volume-incomplete',
   PfErrorCode.ioBackupFailed => 'backup-failed',
   PfErrorCode.validation => 'payload-invalid',
+  // 引擎的两态分开：一个是"环境里没有这个库"，一个是"有这个库但不是
+  // SQLCipher"。两者的处置不同（装库 vs 换构建），因此不能合并成
+  // 一个 'engine-error'。
+  PfErrorCode.storageEngineUnavailable => 'engine-unavailable',
+  PfErrorCode.storageEngineNotCipher => 'engine-not-sqlcipher',
   _ => 'rejected',
 };
