@@ -1,6 +1,6 @@
 /// CLI 与磁盘的接触面。
 ///
-/// 这里只有两件事，但两件都做成**可注入的纯函数**，理由不是洁癖：
+/// 这里只有三件事，但每一件都做成**可注入的纯函数**，理由不是洁癖：
 ///
 ///   1. [FileBytesReader] —— 读文件字节。注入之后测试不必碰磁盘，而
 ///      「文件不存在」「权限不足」这些分支才**测得到**。用真的文件系统时，
@@ -8,8 +8,12 @@
 ///   2. [decodePasswordBytes] —— 把密码文件的字节解成密码。这段逻辑有真实
 ///      且反直觉的细节（BOM、末尾换行），不锁死的话会以「密码明明是对的，
 ///      却报密码错」的形式出现 —— 而那是最难排查的一类失败。
+///   3. [FileTextWriter] —— 写文本文件。跨实现校验产出的报告要**指定 UTF-8**
+///      落盘：Windows 控制台的默认代码页不是 UTF-8，靠重定向拿到的字节
+///      会随机器而变，而那份报告要拿去与另一套实现逐字节 diff。
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -21,6 +25,19 @@ typedef FileBytesReader = Uint8List Function(String path);
 
 /// 真实文件系统的缺省实现。
 Uint8List readFileBytes(String path) => File(path).readAsBytesSync();
+
+/// 写一个文本文件。**编码显式写死 UTF-8**，不跟随平台默认。
+///
+/// 理由是可复现性：本工具要在三平台 CI 上跑，而 Windows 上 `stdout` 的
+/// 默认编码不是 UTF-8（是控制台代码页）。让报告经过重定向取字节，
+/// 就会得到「同一份报告，Linux 上是 UTF-8、Windows 上是 GBK」——
+/// 而它要拿去与另一套实现逐字节 diff，编码一变就是一片假差异。
+/// 写文件时把编码钉死，这条路径就与平台无关了。
+typedef FileTextWriter = void Function(String path, String text);
+
+/// 真实文件系统的缺省实现。不写 BOM（`writeAsStringSync` 的 `utf8` 不带 BOM）。
+void writeTextFile(String path, String text) =>
+    File(path).writeAsStringSync(text, encoding: utf8, flush: true);
 
 /// 取路径的最后一段。`/` 与 `\` 都认（本工具要在三平台 CI 上跑）。
 ///

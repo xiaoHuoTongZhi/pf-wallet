@@ -285,6 +285,8 @@ final class ImportedFile {
     required this.fileBytes,
     required this.header,
     required this.fileSha256Hex,
+    required this.containerPlaintext,
+    required this.payloadNdjson,
     required this.payload,
     required this.payloadVersion,
     required this.fileName,
@@ -296,11 +298,31 @@ final class ImportedFile {
   /// 整文件字节的 SHA-256（幂等短路的键，§4.3 阶段 E）。
   final String fileSha256Hex;
 
+  /// 容器明文 —— 即**解出来的 AES-GCM 明文，也就是 gzip 流本身**（§3.3 阶段 C）。
+  ///
+  /// 它与 [payloadNdjson] 的区别不是实现细节，而是跨实现校验要绑定的**另一个层**：
+  /// 容器层解出来的东西与解压层解出来的东西，可以一层对、一层错
+  /// （例：GZIP 头被换掉而密文区的字节数恰好不变）。两个都给出来，
+  /// 差异才能被定位到层，而不是笼统地报「payload 不一样」。
+  final Uint8List containerPlaintext;
+
+  /// 解压后的 NDJSON 载荷字节（§4.3 阶段 D）。逐行摘要与规范化都要用到它。
+  ///
+  /// M1 的载荷本来就在内存里（与 `import_payload.dart` 同一取舍）；
+  /// M3 接文件网关时改成流式，这里的字段随之换成视图。
+  final Uint8List payloadNdjson;
+
   final DecodedPayload payload;
   final int payloadVersion;
 
   /// 用户看到的文件名（只用于记录，**不参与任何路径构造**）。
   final String fileName;
+
+  /// 容器明文（gzip 流）的 SHA-256 —— 跨实现校验的第 2 层。
+  String get containerPlaintextSha256Hex => Sha256.instance.hashHex(containerPlaintext);
+
+  /// 解压后 NDJSON 的 SHA-256 —— 跨实现校验的第 3 层的全区锚点。
+  String get payloadNdjsonSha256Hex => Sha256.instance.hashHex(payloadNdjson);
 
   /// manifest 里的计数（`counts`），供报告比对。
   Map<String, Object?> get manifestCounts {
@@ -446,8 +468,9 @@ final class PfbImportReader {
     }
 
     final DecodedPayload payload;
+    final Uint8List ndjson;
     try {
-      final ndjson = _gunzip(plain, header);
+      ndjson = _gunzip(plain, header);
       payload = PfbPayloadDecoder.decode(ndjson);
     } on PfError catch (error) {
       throw _triage(ImportStage.payload, error);
@@ -473,6 +496,10 @@ final class PfbImportReader {
       fileBytes: fileBytes,
       header: header,
       fileSha256Hex: inspection.fileSha256Hex,
+      // 两个中间产物原样透出，而不是在这里求摘要：跨实现校验要的是**字节本身**
+      // （逐行摘要与规范化 JSON 都要按行取视图），只给摘要就又得回头去算。
+      containerPlaintext: plain,
+      payloadNdjson: ndjson,
       payload: payload,
       payloadVersion: version,
       fileName: fileName,

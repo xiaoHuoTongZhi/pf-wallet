@@ -33,6 +33,8 @@ final class VectorSample {
     required this.fileName,
     required this.fileBytes,
     required this.fileSha256,
+    required this.payloadNdjson,
+    required this.payloadNdjsonSha256,
     required this.recordCount,
     required this.counts,
     required this.exportKind,
@@ -46,6 +48,18 @@ final class VectorSample {
 
   /// 整文件 SHA-256 —— fixture 记的值，用来独立校验 CLI 打出的那个。
   final String fileSha256;
+
+  /// **解压后**的 NDJSON 载荷字节 —— fixture 记的值。
+  ///
+  /// 注意 fixture 里那个键叫 `payloadNdjsonHex` / `payloadSha256`，
+  /// 而容器明文（§3.3 里那颗 gzip 流）**没有**记在 fixture 里：
+  /// 那是容器层的中间产物，fixture 只记入参（文件字节）与最终产物（载荷）。
+  /// 于是跨实现校验的第 2 层没有第三方锚点，只由「两套实现的 diff 为空」绑定 ——
+  /// 这正是第 2 层与第 1、3 层的分工差别。
+  final Uint8List payloadNdjson;
+
+  /// NDJSON 载荷的 SHA-256 —— fixture 记的值（跨实现校验第 3 层的独立锚点）。
+  final String payloadNdjsonSha256;
 
   /// 载荷里的记录条数（fixture 记录的值，不是被测代码算出来的）。
   final int recordCount;
@@ -92,6 +106,9 @@ final class VectorSample {
       fileBytes: keep == null ? copy : Uint8List.fromList(copy.sublist(0, keep)),
       // 变体改了字节 ⇒ 原来的 SHA 不再适用，标记成空串表明「这份没有预期值」。
       fileSha256: '',
+      // 载荷没动（变体只改容器层的字节）⇒ 载荷侧的预期值照旧有效。
+      payloadNdjson: payloadNdjson,
+      payloadNdjsonSha256: payloadNdjsonSha256,
       recordCount: recordCount,
       counts: counts,
       exportKind: exportKind,
@@ -157,6 +174,8 @@ VectorSample _buildSample(Map<String, Object?> raw) {
     fileName: raw['fileName']! as String,
     fileBytes: fromHex(raw['fileHex']! as String),
     fileSha256: raw['fileSha256']! as String,
+    payloadNdjson: fromHex(raw['payloadNdjsonHex']! as String),
+    payloadNdjsonSha256: raw['payloadSha256']! as String,
     recordCount: raw['recordCount']! as int,
     counts: (manifest['counts'] as Map?)?.cast<String, Object?>() ?? const <String, Object?>{},
     exportKind: raw['exportKind']! as String,

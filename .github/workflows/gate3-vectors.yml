@@ -149,3 +149,154 @@ jobs:
       - name: 比对判定摘要
         shell: bash
         run: python3 tools/ci/compare_verdicts.py reports
+
+  # =============================================================================
+  # 跨实现校验（单平台）
+  # =============================================================================
+  # 内容：把**同一个 .pfb 文件**分别交给 Dart 实现与 Python 独立实现，各自从头走到尾，
+  # 把沿途四层产物（文件字节 / 压缩载荷 / 记录行 / 逐条清单）打成规范文本，
+  # 两份文本必须**逐字节相同**。
+  #
+  # 为什么这一关不能被前面两处取代：
+  #
+  #   · `golden-vectors`（本工作流的另一个作业）核的是**加密原语的中间值** ——
+  #     「AES-GCM 的密文对不对」「Argon2id 的密钥对不对」。它是逐函数的。
+  #   · 本作业核的是**端到端产物** —— 同一个文件喂进去，两套实现解出来的东西
+  #     从字节到语义全部一致。逐函数正确并不蕴含端到端一致：分块顺序、AAD 链、
+  #     contentHash 的覆盖边界、行切分、JSON 的键序与转义，都是「每个函数都对、
+  #     拼起来仍然可以不同」的地方。
+  #
+  # 为什么是**单平台**、不新建 gate4：
+  #
+  #   · 它验的是「两套实现是否一致」，与被测平台无关 —— 放进三平台矩阵只是把
+  #     同一个结论重复三遍，代价却是三倍的 Flutter 安装与 pip 安装。
+  #   · 它属于「容器与载荷的发布格式对不对」，与 gate3 的其它作业同源，
+  #     因此落在这里而不另开一关：多一个关卡名不会多一条判据。
+  #
+  # 反例是**必须**的：正例只能证明「两套实现在这份文件上碰巧一致」，
+  # 证明不了「这个比对真的在看内容」。翻转一个字节，两边都必须拒绝 ——
+  # 而一边拒绝、一边放行，正是这个作业要拦下的最坏情形。
+  # =============================================================================
+  cross-impl:
+    name: 跨实现 PFB 校验
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 读取 Flutter 版本
+        id: flutter-version
+        shell: bash
+        run: echo "version=$(cat .flutter-version)" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          channel: stable
+          cache: true
+
+      # Python 版本**显式钉住**：requirements.txt 里的哈希是按产物（轮子）钉的，
+      # 而轮子的标签含 Python 版本（cp312 / abi3）。不钉住版本时，
+      # 镜像升级 Python 会让 pip 找不到匹配的哈希并以
+      # "THESE PACKAGES DO NOT MATCH THE HASHES" 失败 —— 那条报错看起来像投毒，
+      # 实际只是「换了个解释器」。钉住之后两类原因就分得开了。
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 解析工作区依赖
+        run: flutter pub get
+
+      # --require-hashes 是这个作业的门槛之一，不是顺手加的：
+      # 另一套实现的依赖一旦浮动，「红/绿」的原因就不再是「我们改坏了什么」，
+      # 而是「上游改了实现」。详细说明见 tools/ci/requirements.txt 的头部。
+      - name: 安装 Python 依赖（钉死版本 + 哈希）
+        run: python3 -m pip install --require-hashes -r tools/ci/requirements.txt
+
+      # `.pfb` 在 tracked_paths 的 deny 名单上（它是用户数据），
+      # 所以样本**不能**入库 —— 它在 CI 上从被向量锁死的 fixture 里现落，
+      # 落到 build/（同样在 deny 名单上，因此不会被误提交）。
+      - name: 从 fixture 落出样本（不碰密码学）
+        run: >-
+          python3 tools/ci/pfb_cross_check.py emit-fixture
+          --sample sample-full --out-dir build/cross
+
+      - name: Dart 侧产出四层报告
+        run: >-
+          dart run tools/pf_cli/bin/pf.dart info build/cross/sample-full.pfb
+          --records --password-file build/cross/password.txt
+          --out build/cross/sample-full.dart.txt
+
+      - name: Python 侧产出四层报告，并与 fixture 的期望值逐项比对
+        run: >-
+          python3 tools/ci/pfb_cross_check.py check
+          --file build/cross/sample-full.pfb
+          --password-file build/cross/password.txt
+          --expect build/cross/sample-full.expect.json
+          --out build/cross/sample-full.py.txt
+
+      # 这一条是本作业的判据本体。diff 的输出（左 Dart、右 Python）直接进日志：
+      # 「第几层开始不同」是排查时唯一有用的第一条信息。
+      - name: 两份报告必须逐字节相同
+        shell: bash
+        run: |
+          if ! diff -u build/cross/sample-full.dart.txt build/cross/sample-full.py.txt; then
+            echo "::error::两套实现的四层产物不一致（左 Dart / 右 Python，见上面的 diff）"
+            exit 1
+          fi
+          echo "✓ 四层逐字节相同（$(wc -c < build/cross/sample-full.dart.txt) 字节）"
+
+      # 反例：翻转第 60 字节。取这个偏移是有意的 —— 它在头 CRC 的覆盖范围
+      # （0..43）之外、在 contentDigest 的覆盖范围（48..长度-32）之内，
+      # 因此两边应当落到**同一个**结论：内容损坏，而不是结构损坏。
+      # 两边返回的退出码必须都是 1；`2`（工具故障）会掩盖真正的失败。
+      - name: 反例：翻转第 60 字节 ⇒ 两边都必须拒绝
+        shell: bash
+        run: |
+          python3 tools/ci/pfb_cross_check.py tamper \
+            --file build/cross/sample-full.pfb \
+            --out build/cross/tampered.pfb \
+            --offset 60
+
+          set +e
+          dart run tools/pf_cli/bin/pf.dart verify build/cross/tampered.pfb \
+            --password-file build/cross/password.txt
+          dart_code=$?
+          set -e
+          if [ "$dart_code" != "1" ]; then
+            echo "::error::篡改的文件：pf verify 期望退出码 1（业务结论），实际 $dart_code"
+            exit 1
+          fi
+
+          set +e
+          python3 tools/ci/pfb_cross_check.py check \
+            --file build/cross/tampered.pfb \
+            --password-file build/cross/password.txt \
+            --out build/cross/tampered.py.txt
+          py_code=$?
+          set -e
+          if [ "$py_code" != "1" ]; then
+            echo "::error::篡改的文件：pfb_cross_check.py 期望退出码 1（断言失败），实际 $py_code"
+            exit 1
+          fi
+
+          echo "✓ 两边都拒绝（Dart=$dart_code，Python=$py_code）"
+
+      # 四份产物一起上传：只看「绿了」无法回答「当时两份文本长什么样」。
+      # 失败时也要上传（if: always()）—— 失败现场才是真正需要看它们的时刻。
+      - name: 上传跨实现校验的产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-impl-${{ github.sha }}
+          path: |
+            build/cross/sample-full.pfb
+            build/cross/sample-full.expect.json
+            build/cross/sample-full.dart.txt
+            build/cross/sample-full.py.txt
+          if-no-files-found: error
+          retention-days: 30

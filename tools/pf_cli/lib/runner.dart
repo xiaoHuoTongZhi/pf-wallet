@@ -4,12 +4,13 @@ import 'package:args/args.dart';
 import 'package:pf_core/pf_core.dart';
 
 import 'commands/info.dart';
+import 'commands/info_records.dart';
 import 'commands/verify.dart';
 import 'exit_codes.dart';
 import 'file_source.dart';
 import 'reporter.dart';
 
-/// 可测试的入口：argv、两个输出流、文件读取与环境变量都从参数进，
+/// 可测试的入口：argv、两个输出流、文件读取/写入与环境变量都从参数进，
 /// 退出码从返回值出。
 ///
 /// 不把逻辑写在 `bin/pf.dart` 里，是因为那会迫使测试去起子进程 ——
@@ -17,14 +18,15 @@ import 'reporter.dart';
 /// 把入口做成函数，`bin/` 就只剩一行 `exitCode = await runPf(...)`，
 /// 于是 CLI 的每一条分支都进得了单测。
 ///
-/// [readBytes] 与 [environment] 之所以可注入，是为了让「文件不存在」
-/// 「密码从环境变量来」这类分支**不依赖运行环境**就能测 ——
+/// [readBytes] / [writeText] 与 [environment] 之所以可注入，是为了让
+/// 「文件不存在」「密码从环境变量来」这类分支**不依赖运行环境**就能测 ——
 /// 依赖真磁盘的测试在 CI 上会因为权限模型不同而给出不同结论。
 Future<int> runPf(
   List<String> arguments, {
   required StringSink out,
   required StringSink err,
   FileBytesReader? readBytes,
+  FileTextWriter? writeText,
   Map<String, String>? environment,
 }) async {
   final parser = _buildParser();
@@ -79,6 +81,21 @@ Future<int> runPf(
 
   switch (name) {
     case 'info':
+      // `--records` 走另一条路径，且**不经 reporter**：它产出的是给 diff 用的
+      // 规范文本，不是人读行、也不是 NDJSON（理由见 commands/info_records.dart）。
+      if (command.flag('records')) {
+        return runInfoRecords(
+          file: file,
+          passwordFile: command.option('password-file'),
+          outPath: command.option('out'),
+          json: results.flag('json') || command.flag('json'),
+          out: out,
+          err: err,
+          readBytes: reader,
+          writeText: writeText ?? writeTextFile,
+          environment: environment ?? Platform.environment,
+        );
+      }
       return runInfo(file: file, reporter: reporter, err: err, readBytes: reader);
     case 'verify':
       return runVerify(
@@ -110,7 +127,26 @@ ArgParser _buildParser() {
       'info',
       ArgParser()
         ..addFlag('json', negatable: false, help: '同全局 --json')
-        ..addFlag('help', abbr: 'h', negatable: false, help: '显示本子命令的帮助'),
+        ..addFlag('help', abbr: 'h', negatable: false, help: '显示本子命令的帮助')
+        ..addFlag(
+          'records',
+          negatable: false,
+          help:
+              '打出四层规范报告（需密码，与 verify 同源）。'
+              '报告给跨实现 diff 用，因此不含文件名/路径/时间戳，也不与 --json 共存。',
+        )
+        ..addOption(
+          'password-file',
+          abbr: 'p',
+          help: '--records 的密码来源（推荐）。文件末尾的一个换行与 UTF-8 BOM 会被忽略。',
+        )
+        ..addOption(
+          'out',
+          help:
+              '把报告写到文件（UTF-8，无 BOM）。缺省写 stdout。'
+              '跨实现校验必须用它：Windows 上 stdout 的默认编码不是 UTF-8，'
+              '靠重定向取字节会得到随机器而变的报告。',
+        ),
     )
     ..addCommand(
       'verify',
@@ -140,13 +176,17 @@ pf —— PF Wallet 命令行工具
 命令：
   info    <file>              不解密读出容器头部：格式版本、KDF 参数、块数、
                               明文长度、内容摘要判定。**不需要密码。**
+  info    <file> --records    四层规范报告（文件字节 / 压缩载荷 / 记录行 /
+                              逐条清单），给跨实现 diff 用。**需要密码** ——
+                              逐条清单只存在于解密之后；这是 info 唯一需要
+                              密码的模式，也是唯一不按人读格式输出的模式。
   verify  <file> --password-file <f>
                               完整校验：读头部 → 免密完整性 → 派生密钥 →
                               开容器 → 解载荷，报出 manifest 计数。
   init | seed | export | import | dump
                               需要 SQLCipher 的读写命令，在 #5b 落地。
 
-密码来源（verify）：
+密码来源（verify、info --records）：
   --password-file <f>         从文件读（推荐）
   环境变量 PF_PASSWORD        直接给出密码
   刻意不提供 --password <明文>：命令行参数会留在 shell 历史与进程列表里。

@@ -14,7 +14,6 @@
 /// 迟早会与导入器分叉，而分叉的那天没有任何测试会响。
 library;
 
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -23,6 +22,7 @@ import 'package:pf_io/pf_io.dart';
 
 import '../exit_codes.dart';
 import '../file_source.dart';
+import '../password.dart';
 import '../reporter.dart';
 import '../status.dart';
 
@@ -47,59 +47,26 @@ Future<int> runVerify({
   }
 
   // ── 密码来源：文件优先，其次环境变量；两条都没有就是用法错误 ──────────
-  final Uint8List password;
-  final String passwordSource;
-  if (passwordFile != null) {
-    try {
-      password = decodePasswordBytes(readBytes(passwordFile));
-    } on FileSystemException catch (error) {
-      err.writeln('读不到密码文件：$passwordFile —— ${error.message}');
-      reporter.result(
-        exitCode: ExitCodes.toolError,
-        status: 'io-error',
-        fields: <String, Object?>{
-          'command': 'verify',
-          'file': file,
-          'passwordFile': passwordFile,
-          'message': error.message,
-        },
-      );
-      return ExitCodes.toolError;
+  // 解析逻辑与 `info --records` 共用同一处（`lib/password.dart`）：
+  // 两条命令的处方相同，说法就必须相同。
+  final resolution = resolvePassword(
+    file: file,
+    passwordFile: passwordFile,
+    readBytes: readBytes,
+    environment: environment,
+    command: 'verify',
+  );
+  final failure = resolution.failure;
+  if (failure != null) {
+    for (final line in failure.messages) {
+      err.writeln(line);
     }
-    passwordSource = 'password-file';
-  } else {
-    final fromEnv = environment[kPasswordEnvVar];
-    if (fromEnv == null || fromEnv.isEmpty) {
-      err.writeln('缺少密码。二选一：');
-      err.writeln('  --password-file <f>    从文件读（推荐）');
-      err.writeln('  环境变量 $kPasswordEnvVar      直接给出密码');
-      err.writeln('刻意不提供 --password <明文>：命令行参数会留在 shell 历史与进程列表里。');
-      reporter.result(
-        exitCode: ExitCodes.toolError,
-        status: 'usage-error',
-        fields: <String, Object?>{'command': 'verify', 'file': file},
-      );
-      return ExitCodes.toolError;
-    }
-    password = Uint8List.fromList(utf8.encode(fromEnv));
-    passwordSource = 'env';
-  }
-
-  if (password.isEmpty) {
-    // 空密码不是「密码错」，是「没给密码」—— 前者该让用户再试一次，
-    // 后者该让他去看自己的命令。判成 wrong-password 会把他引向错的方向。
-    err.writeln('密码为空。这通常意味着密码文件是空文件，或环境变量设成了空串。');
-    reporter.result(
-      exitCode: ExitCodes.toolError,
-      status: 'usage-error',
-      fields: <String, Object?>{
-        'command': 'verify',
-        'file': file,
-        'passwordSource': passwordSource,
-      },
-    );
+    reporter.result(exitCode: ExitCodes.toolError, status: failure.status, fields: failure.fields);
     return ExitCodes.toolError;
   }
+  final resolved = resolution.value!;
+  final password = resolved.bytes;
+  final passwordSource = resolved.source;
 
   final Uint8List bytes;
   try {

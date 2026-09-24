@@ -45,6 +45,20 @@ final class MemoryFiles {
 
   final Map<String, Uint8List> _files;
 
+  /// 当前内容（只读视图）—— 用来断言「写出去的是什么」。
+  Map<String, Uint8List> get entries => Map<String, Uint8List>.unmodifiable(_files);
+
+  bool contains(String path) => _files.containsKey(path);
+
+  /// 按 UTF-8 解码读回一个文本文件。
+  String textAt(String path) {
+    final bytes = _files[path];
+    if (bytes == null) {
+      throw StateError('内存文件系统里没有 $path（有的是 ${_files.keys.join(', ')}）');
+    }
+    return utf8.decode(bytes);
+  }
+
   void putBytes(String path, Uint8List bytes) => _files[path] = bytes;
 
   void putText(String path, String text) => _files[path] = Uint8List.fromList(utf8.encode(text));
@@ -60,11 +74,16 @@ final class MemoryFiles {
 
 /// 一次 CLI 调用的结果。
 final class CliResult {
-  const CliResult({required this.code, required this.out, required this.err});
+  CliResult({required this.code, required this.out, required this.err, MemoryFiles? written})
+    : written = written ?? MemoryFiles();
 
   final int code;
   final Capture out;
   final Capture err;
+
+  /// `--out` 写下的文件（内存）。不注入写出时是空的 ——
+  /// 那些用例本来就不走 `--out`。
+  final MemoryFiles written;
 
   /// 非 `--json` 模式的末行。
   String get lastLine => out.lines.last;
@@ -78,15 +97,27 @@ final class CliResult {
   Map<String, Object?> get result => jsonLines.last;
 }
 
-/// 跑一次 CLI。两个输出流与文件来源都在内存里，环境变量只认显式传入的。
+/// 跑一次 CLI。两个输出流、文件来源与文件写出都在内存里，
+/// 环境变量只认显式传入的。
 Future<CliResult> runCli(
   List<String> args, {
   MemoryFiles? files,
+  MemoryFiles? written,
   Map<String, String> environment = const <String, String>{},
 }) async {
   final out = Capture();
   final err = Capture();
   final fs = files ?? MemoryFiles();
-  final code = await runPf(args, out: out, err: err, readBytes: fs.read, environment: environment);
-  return CliResult(code: code, out: out, err: err);
+  final sink = written ?? MemoryFiles();
+  final code = await runPf(
+    args,
+    out: out,
+    err: err,
+    readBytes: fs.read,
+    // `--out` 也走内存：否则「报告写到了哪个路径」这件事在测试里
+    // 只能靠**真磁盘**验证，而那条路径在只读工作区里会以权限错误的形式失败。
+    writeText: sink.putText,
+    environment: environment,
+  );
+  return CliResult(code: code, out: out, err: err, written: sink);
 }

@@ -11,9 +11,12 @@
 library;
 
 export 'commands/info.dart';
+export 'commands/info_records.dart';
 export 'commands/verify.dart';
 export 'exit_codes.dart';
 export 'file_source.dart';
+export 'password.dart';
+export 'records.dart';
 export 'reporter.dart';
 export 'runner.dart';
 export 'status.dart';

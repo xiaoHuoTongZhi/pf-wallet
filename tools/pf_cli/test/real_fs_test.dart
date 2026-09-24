@@ -13,6 +13,7 @@
 /// 而这里连 `build/` 都不需要）。
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:pf_cli/pf_cli.dart';
@@ -138,6 +139,35 @@ void main() {
       final result = CliResult(code: code, out: out, err: err);
       expect(result.result['file'], path);
       expect(baseNameOf(path), sample.fileName);
+    });
+
+    test('info --records --out：从磁盘读、往磁盘写（不注入 writeText）', () async {
+      // 为什么必须有不注入 writeText 的这一条：`writeText ?? writeTextFile`
+      // 的右侧与 `writeTextFile` 的函数体，在注入的实现里永远不会被执行 ——
+      // 于是「报告真的能落到磁盘上」这件事从没被验证过，而 CI 完全依赖它
+      // （跨实现校验比对的就是这两个文件）。
+      final pfbPath = writeSample();
+      final pwPath = writePassword();
+      final outPath = '${tmp.path}${Platform.pathSeparator}report.dart.txt';
+      final out = Capture();
+      final err = Capture();
+
+      final code = await runPf(
+        <String>['info', pfbPath, '--records', '--password-file', pwPath, '--out', outPath],
+        out: out,
+        err: err,
+      );
+
+      expect(code, ExitCodes.ok);
+      expect(out.text, isEmpty, reason: '--out 模式不该再往 stdout 写报告');
+      final written = File(outPath);
+      expect(written.existsSync(), isTrue);
+      final text = written.readAsStringSync(encoding: utf8);
+      expect(text, startsWith(kCrossCheckReportHeader));
+      expect(text, contains('layer1.file.sha256=${sample.fileSha256}'));
+      // 无 BOM、LF 结尾：报告要拿去与另一套实现逐字节 diff。
+      expect(written.readAsBytesSync().take(3), isNot(<int>[0xEF, 0xBB, 0xBF]));
+      expect(written.readAsBytesSync().last, 0x0A);
     });
   });
 }
