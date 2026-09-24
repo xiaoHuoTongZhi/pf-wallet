@@ -39,6 +39,20 @@ typedef FileTextWriter = void Function(String path, String text);
 void writeTextFile(String path, String text) =>
     File(path).writeAsStringSync(text, encoding: utf8, flush: true);
 
+/// 写一个**二进制**文件（导出产物 `.pfb` 的落盘口）。
+///
+/// 与 [FileTextWriter] 分开而不是共用一个「写字符串」的口子：`.pfb` 是二进制
+/// 容器（密文里必须能出现任意字节），任何经由 `String` 的路径都会先经过一次
+/// 编码转换 —— 那正是把一份好备份写坏的经典方式，而且它在小规模测试里
+/// 通常不会暴露（明文头恰好是 ASCII）。两条路径各自显式，代价是一个 typedef。
+typedef FileBytesWriter = void Function(String path, Uint8List bytes);
+
+/// 真实文件系统的缺省实现。`flush: true` 让字节在被调用方看到「已写完」
+/// 之前就落到操作系统 —— 导入下一步就要读这个文件，缓冲没落盘会让
+/// 「刚导出的文件读不出来」变成一次偶发失败。
+void writeFileBytes(String path, Uint8List bytes) =>
+    File(path).writeAsBytesSync(bytes, flush: true);
+
 /// 取路径的最后一段。`/` 与 `\` 都认（本工具要在三平台 CI 上跑）。
 ///
 /// 用途只有一个：把 `imported.fileName` 填成人看得懂的名字。

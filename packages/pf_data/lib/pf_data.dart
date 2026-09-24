@@ -1,14 +1,17 @@
 export 'src/account_repository.dart';
+export 'src/app_meta.dart';
 export 'src/balance_engine.dart';
 export 'src/balance_recalc.dart';
 export 'src/category_repository.dart';
 export 'src/database.dart';
 export 'src/db.dart';
 export 'src/entities.dart';
+export 'src/ledger_repository.dart';
 export 'src/migration.dart';
 export 'src/migration_runner.dart';
 export 'src/open_flow.dart';
 export 'src/schema_v1.dart';
+export 'src/sqlite3/database.dart';
 export 'src/sqlite3/db.dart';
 export 'src/sqlite3/engine.dart';
 export 'src/sqlite3/engine_verdict.dart';

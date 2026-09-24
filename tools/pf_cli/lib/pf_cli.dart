@@ -10,14 +10,22 @@
 /// **不允许反向依赖**（工具包被产品代码引用会让发布的产物里多出一个 CLI）。
 library;
 
+export 'backup.dart';
+export 'commands/dump.dart';
 export 'commands/engine.dart';
+export 'commands/export.dart';
+export 'commands/import.dart';
 export 'commands/info.dart';
 export 'commands/info_records.dart';
+export 'commands/init.dart';
+export 'commands/seed.dart';
 export 'commands/verify.dart';
+export 'database_key.dart';
 export 'engine_fetch.dart';
 export 'engine_paths.dart';
 export 'exit_codes.dart';
 export 'file_source.dart';
+export 'open_db.dart';
 export 'password.dart';
 export 'records.dart';
 export 'reporter.dart';

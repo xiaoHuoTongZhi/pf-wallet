@@ -58,6 +58,7 @@ import 'dart:convert';
 import 'package:pf_core/pf_core.dart';
 import 'package:pf_data/pf_data.dart';
 
+import 'export_extract.dart';
 import 'export_payload.dart';
 import 'import_merge.dart';
 import 'import_payload.dart';
@@ -536,7 +537,11 @@ abstract final class ImportApplier {
 
     final localRows = <String, List<Map<String, Object?>>>{};
     for (final type in kPayloadStageOrder) {
-      final table = kPayloadRecordSpecs[type]!.table;
+      // 表名取自 `payloadTableOf`（`export_extract.dart`）—— 导出侧读库
+      // 用的是同一个访问器。两处各自 `kPayloadRecordSpecs[type]!.table`
+      // 也能跑，但那样「表名从哪来」就有两个入口，将来加一层缓存或改名
+      // 时只改一处就是个静默的错位。
+      final table = payloadTableOf(type);
       if (byTable.containsKey(table)) {
         localRows[table] = await _loadByIds(db, table, byTable[table]!);
       }
@@ -547,7 +552,7 @@ abstract final class ImportApplier {
     // 这些行**不改写任何裁决**（裁决仍然按 id 查表），只用来产出待软删清单。
     if (request.mode == ImportMode.replace) {
       for (final type in kPayloadStageOrder) {
-        final table = kPayloadRecordSpecs[type]!.table;
+        final table = payloadTableOf(type);
         if (!_isLedgerScoped(table)) {
           continue;
         }

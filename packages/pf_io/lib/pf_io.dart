@@ -6,6 +6,7 @@
 /// 合并算法的正确性不该依赖数据库是否装好。
 library;
 
+export 'src/export_extract.dart';
 export 'src/export_payload.dart';
 export 'src/exporter.dart';
 export 'src/import_apply.dart';

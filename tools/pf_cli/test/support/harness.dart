@@ -81,8 +81,9 @@ final class CliResult {
   final Capture out;
   final Capture err;
 
-  /// `--out` 写下的文件（内存）。不注入写出时是空的 ——
-  /// 那些用例本来就不走 `--out`。
+  /// `--out` 写下的文件（内存）。**文本与二进制都进这里**（`putText` /
+  /// `putBytes`）—— 对调用方来说它们都只是「这次命令落到某个路径上的字节」，
+  /// 而区分文本与二进制是**被测代码**的责任（两个 typedef），不是夹具的。
   final MemoryFiles written;
 
   /// 非 `--json` 模式的末行。
@@ -114,9 +115,10 @@ Future<CliResult> runCli(
     out: out,
     err: err,
     readBytes: fs.read,
-    // `--out` 也走内存：否则「报告写到了哪个路径」这件事在测试里
+    // `--out` 也走内存：否则「报告/导出产物写到了哪个路径」这件事在测试里
     // 只能靠**真磁盘**验证，而那条路径在只读工作区里会以权限错误的形式失败。
     writeText: sink.putText,
+    writeBytes: sink.putBytes,
     environment: environment,
   );
   return CliResult(code: code, out: out, err: err, written: sink);

@@ -65,6 +65,54 @@ abstract interface class PfDatabase {
 }
 
 /// 打开连接后必须立即执行的 PRAGMA。
+///
+/// ## 已收回的安全收紧：`trusted_schema = OFF`
+///
+/// M0 曾在 [securityRequired] 与 [postOpen] 里各加过一条
+/// `PRAGMA trusted_schema = OFF`（§3.4 未列，属于自加的加固）。
+/// **#5b 第二笔把它收回**。这里写清三件事 —— 否则后来的人只会看到
+/// 一条离席的加固，读不出这是刻意收回还是漏掉了。
+///
+/// ### 为何收回
+///
+/// 它与定版的 schema 互斥。`schema_v1.dart` 的 `txn.tags` 与
+/// `theme_profile.spec_json` 两列带 `CHECK (json_valid(…))`，而定版
+/// SQLCipher 4.5.2 绑的是 **SQLite 3.39.2** —— 在 `trusted_schema = OFF`
+/// 下 `json_valid()` 被判为 *unsafe use*，**建表与写入都会报
+/// `unsafe use of json_valid(), SQL logic error`**。
+/// 于是 `pf init` 连表都建不出来，五条读写命令全部不可达。
+///
+/// 实测（`sqlite3_exec` 直调两份定版件，同一段 SQL）：
+/// `e_sqlcipher`（SQLite **3.39.2**）**FAIL**、`e_sqlite3`（SQLite **3.49.1**）**PASS**
+/// —— 差别只在 SQLite 版本，上游后来把 JSON 函数标成了 `SQLITE_INNOCUOUS`。
+/// 不是我们的 SQL 写错，是引擎太旧。
+/// 又因为 **INSERT 同样被拒**，「建表时临时 ON、建完再 OFF」不是出路。
+///
+/// ### 什么条件下拿回
+///
+/// 当**所有目标平台**（含 M2 移动端）随库链接的 SQLCipher 都绑定
+/// SQLite ≥ 标了 `SQLITE_INNOCUOUS` 的那个版本时。
+///
+/// 在那之前，这条加固防的是一个**空集**：它拦的是「schema 里的视图/触发器
+/// 调用应用自定义函数」，而本应用**从不注册自定义 SQL 函数**
+/// （全仓 `createFunction` 调用数为 0），这条路径根本不存在。
+/// 它换掉的却是一条真实的完整性检查 —— `json_valid` 防的是
+/// 「应用自己写进坏 JSON」，离 bug 更近。
+///
+/// ### 拿回时要做什么
+///
+/// 1. 把两条 `PRAGMA trusted_schema = OFF` 加回本文件（[securityRequired]
+///    与 [postOpen]）；
+/// 2. 同步 `tools/golden_vectors_gen/db_open.py` 的 [postOpen] 转录，并重新
+///    `python tools/golden_vectors_gen/db_open.py --write` ——
+///    `test_vectors/v1/db_open.json` 把脚本文本**逐字**钉死了，不同步必红；
+/// 3. **重跑 `tools/pf_cli/test/roundtrip_test.dart`**（需定版 SQLCipher，
+///    先 `melos run engine:fetch`）。
+///
+/// 第 3 步是关键判据：那份 DDL 在 `roundtrip_test` 之前**没有任何真实执行者**
+/// （其余测试对「安全 PRAGMA 清单」与「建表 DDL」都只做文本断言），
+/// 这正是这个冲突能一路潜伏到 `pf init` 真的存在才暴露的原因。
+/// **只在 DDL 真实执行通过之后，才算拿回的时机到了。**
 abstract final class PfSqlitePragma {
   /// 数据库密钥的字节长度。
   static const int databaseKeyLength = 32;
@@ -124,16 +172,19 @@ abstract final class PfSqlitePragma {
   ///   - `journal_mode = WAL`：WAL 文件由 SQLCipher 加密，保留它换取并发性能。
   ///   - `foreign_keys = ON`：SQLite 默认关闭外键约束，不打开会静默产生孤儿记录。
   ///   - `secure_delete = ON`：删除时覆写页内容，而不是只标记空闲。
-  ///   - `trusted_schema = OFF`：不允许 schema 中定义的视图 / 触发器调用应用自定义函数，
-  ///     缩小「被篡改的库文件通过 schema 触发逻辑」的攻击面。
   ///   - `cipher_memory_security = ON`：SQLCipher 释放内存页时清零，
   ///     防止密钥与明文残留在已 free 的堆块里。
+  ///
+  /// 这里**故意没有** `trusted_schema = OFF`：M0 加过、#5b 第二笔收回。
+  /// 理由（与定版 SQLite 3.39.2 上的 `json_valid` 互斥）、恢复条件、
+  /// 以及恢复时必须补做的事，全部写在 [PfSqlitePragma] 的类文档里 ——
+  /// **不要**在没有重跑 `roundtrip_test.dart`（那份 DDL 唯一的真实执行者）
+  /// 的情况下把它加回来。
   static const List<String> securityRequired = <String>[
     'PRAGMA temp_store = MEMORY',
     'PRAGMA journal_mode = WAL',
     'PRAGMA foreign_keys = ON',
     'PRAGMA secure_delete = ON',
-    'PRAGMA trusted_schema = OFF',
     'PRAGMA cipher_memory_security = ON',
   ];
 
@@ -192,18 +243,18 @@ abstract final class PfSqlitePragma {
   ///   - `synchronous = NORMAL`（WAL 下只可能丢最后一个事务，不损坏库）；
   ///   - `busy_timeout = 5000`；
   ///   - `temp_store = MEMORY`（安全要求，见 [securityRequired]）；
-  ///   - `secure_delete = ON`；
-  ///   - `trusted_schema = OFF`（M0 增补，§3.4 未列但属于安全收紧）。
+  ///   - `secure_delete = ON`。
   ///
   /// 审计不变式：[openSetup]（去 key 行）与本列表的**并集** ⊇
   /// [securityRequired]（由单元测试钉死 —— `foreign_keys` 在 setup 段，
   /// 其余在本列表）。
+  ///
+  /// `trusted_schema = OFF`（M0 增补）**已收回**，见类文档。
   static const List<String> postOpen = <String>[
     'PRAGMA journal_mode = WAL',
     'PRAGMA synchronous = NORMAL',
     'PRAGMA busy_timeout = 5000',
     'PRAGMA temp_store = MEMORY',
     'PRAGMA secure_delete = ON',
-    'PRAGMA trusted_schema = OFF',
   ];
 }

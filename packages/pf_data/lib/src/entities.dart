@@ -105,6 +105,84 @@ abstract final class TxnTime {
   }
 }
 
+/// ledger 表的一行（§2.3）。
+///
+/// 它是整个模型的**根实体**：所有业务实体都挂 `ledger_id`，而 .pfb 的
+/// 最小导出单位就是一个账本（§2.2）。因此它虽然字段最少，
+/// 却是「一条记录属于谁」这个问题的最终答案。
+final class LedgerRecord {
+  // 非 const：构造函数体里做前置校验（id 必须是 ULID、code 非空），
+  // 而 const 构造函数不允许有体。这与本文件其余记录类是同一个取舍
+  // —— 校验写在构造函数里，坏值就**造不出来**，而不是等到写库时才炸。
+  LedgerRecord({
+    required this.id,
+    required this.name,
+    required this.code,
+    this.currency = 'CNY',
+    this.isDefault = false,
+    this.sortOrder = 0,
+    required this.createdAt,
+    required this.updatedAt,
+    this.deletedAt,
+    required this.deviceId,
+    this.rev = 1,
+  }) {
+    if (!Ulid.isValid(id)) {
+      throw DomainError.validation(detail: 'ledger.id 不是合法 ULID：$id');
+    }
+    if (code.isEmpty) {
+      throw DomainError.validation(detail: 'ledger.code 不能为空');
+    }
+  }
+
+  final String id;
+  final String name;
+
+  /// 账本的稳定短码（唯一）。用途是**跨设备的可读标识**：
+  /// 合并时如果账本要重建（S29 的账本映射），`code` 是唯一能让人
+  /// 判断「这两个账本是同一个」的东西 —— 而 `id` 在那时已经不同了。
+  final String code;
+
+  final String currency;
+  final bool isDefault;
+  final int sortOrder;
+  final int createdAt;
+  final int updatedAt;
+  final int? deletedAt;
+  final String deviceId;
+  final int rev;
+
+  bool get isDeleted => deletedAt != null;
+
+  Map<String, Object?> toRow() => <String, Object?>{
+    'id': id,
+    'name': name,
+    'code': code,
+    'currency': currency,
+    'is_default': isDefault ? 1 : 0,
+    'sort_order': sortOrder,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+    'deleted_at': deletedAt,
+    'device_id': deviceId,
+    'rev': rev,
+  };
+
+  static LedgerRecord fromRow(Map<String, Object?> row) => LedgerRecord(
+    id: row['id']! as String,
+    name: row['name']! as String,
+    code: row['code']! as String,
+    currency: row['currency']! as String,
+    isDefault: (row['is_default']! as int) != 0,
+    sortOrder: row['sort_order']! as int,
+    createdAt: row['created_at']! as int,
+    updatedAt: row['updated_at']! as int,
+    deletedAt: row['deleted_at'] as int?,
+    deviceId: row['device_id']! as String,
+    rev: row['rev']! as int,
+  );
+}
+
 /// account 表的一行（§2.3）。
 final class AccountRecord {
   AccountRecord({

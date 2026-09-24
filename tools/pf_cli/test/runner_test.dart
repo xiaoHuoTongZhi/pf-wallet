@@ -29,11 +29,23 @@ void main() {
     test('--help 列出全部命令与退出码表，返回 0', () async {
       final r = await runCli(<String>['--help']);
       expect(r.code, ExitCodes.ok);
-      expect(r.out.text, contains('info'));
-      expect(r.out.text, contains('verify'));
-      expect(r.out.text, contains('init | seed | export | import | dump'));
+      // 十条命令一条都不能漏：帮助里少一条，等于那条命令在用户那里不存在
+      // （而它其实存在，只是没人知道）。
+      for (final name in <String>[
+        'engine',
+        'info',
+        'verify',
+        'init',
+        'seed',
+        'export',
+        'import',
+        'dump',
+      ]) {
+        expect(r.out.text, contains(name), reason: '帮助里缺少 $name');
+      }
       expect(r.out.text, contains('退出码'));
       expect(r.out.text, contains(kPasswordEnvVar), reason: '两条密码来源必须写在帮助里');
+      expect(r.out.text, contains(kDatabaseKeyEnvVar), reason: '数据库密钥的两条来源也必须写在帮助里');
       expect(r.err.text, isEmpty);
     });
 
@@ -73,10 +85,21 @@ void main() {
     });
 
     test('子命令自身的 --help 返回 0，且打到 stdout', () async {
-      for (final name in <String>['info', 'verify']) {
+      // 全部子命令都过一遍：漏掉的那条一旦在 `--help` 上抛异常，
+      // 用户看到的是「用法错误」而不是帮助 —— 而帮助正是他此刻在找的东西。
+      for (final name in <String>[
+        'engine',
+        'info',
+        'verify',
+        'init',
+        'seed',
+        'export',
+        'import',
+        'dump',
+      ]) {
         final r = await runCli(<String>[name, '--help']);
         expect(r.code, ExitCodes.ok, reason: name);
-        expect(r.out.text, contains('$name 用法'));
+        expect(r.out.text, contains('$name 用法'), reason: name);
         expect(r.err.text, isEmpty, reason: name);
       }
     });

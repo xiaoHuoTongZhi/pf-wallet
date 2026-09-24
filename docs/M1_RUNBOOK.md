@@ -2,12 +2,11 @@
 
 > 阅读对象：要按顺序把 M1 收口推完、并要自己复现每一节结论的人（也就是你自己）。
 >
-> 本文只写**已经落地**的三节：**命令行工具（`pf`）**、**跨实现验证**、
-> **引擎适配**。M1 收口的其余步骤（`#1a` / `#5b` 的五条读写命令 / `#1b`）
+> 本文只写**已经落地**的四节：**命令行工具（`pf`）**、**跨实现验证**、
+> **引擎适配**、**五条读写命令与往返验收**。M1 收口的其余步骤（`#1a` / `#1b`）
 > 在各自落地时再补进本文 ——
 > 写在这里的规则只有一条：**每一节都必须给出「本机怎么复现」与「看到什么才算通过」**，
 > 否则那一节就不该存在（结论无法复现的手册，读起来像承诺）。
-
 > **本机执行环境的两个前提**（踩过，写下来免得再踩）：
 >
 >   1. 下面所有命令都在 **Git Bash** 里执行。`cmd.exe` 里没有 `grep` / `wc` /
@@ -508,4 +507,267 @@ CI 落点在 **gate2（`gate2-test.yml`）的 `unit-tests` 作业**，三个平�
 第 2、3 步刻意做成**独立的一步**而不是只靠测试的退出码：它把三平台各自的结论打成人能读的
 一行（库路径、sqlite 版本、cipher 身份串），而出错现场只有一次机会。
 完整的断言集在 `tools/pf_cli/test/engine_*_test.dart`。
+
+---
+
+## 4. 五条读写命令与往返验收（`#5b` 第二笔）
+
+`init` / `seed` / `export` / `import` / `dump` 是 **M1 里唯一会写盘的一层**：
+`#1b` 之前没有任何命令能创建数据库，因此这一节也是「表结构、载荷编码、
+导入编排在**真库**上到底能不能跑通」的第一次实测。
+
+### 4.1 两处风险点的设计（结论先写在这里）
+
+**① 表 → 载荷阶段的映射：只有一份真相。**
+
+`kPayloadRecordSpecs`（`pf_io/lib/src/import_payload.dart`）是权威表，8 个阶段
+各绑一张表；`payloadTableOf(stage)`（`pf_io/lib/src/export_extract.dart`）
+是**唯一访问器**，导出侧读库用它，导入侧的引用校验（`import_apply.dart` 的
+`_planRequest`）也用它。
+
+为什么这件事值得单独设计：导出与导入如果各写一份阶段→表的名字，就会出现
+「导出的行按 A 表取、导入的自检按 B 表核」这种分歧 —— 而它**不会报错**，
+只会让某个阶段的自检恒为通过。`pf_io/test/export_extract_test.dart` 把
+「访问器与权威表同源」与「列集合逐列且顺序一致」钉死。
+
+**② `PfDb` 与 `PfDatabase` 的组合点：`Sqlite3Database`。**
+
+本仓有两张数据库契约，它们**不是同一件事的两个名字**：
+
+| 契约 | 回答什么 | 谁在用 |
+|---|---|---|
+| `PfDb` | 多行读 / 参数化写 / 事务边界 | 仓储、`MigrationRunner`、`ImportApplier` |
+| `PfDatabase` | 打开 / 关闭 / 只读事务 / 写事务 / rekey | M2 移动端的连接生命周期 |
+
+`Sqlite3Database`（`pf_data/lib/src/sqlite3/database.dart`）持连接、
+`.db` 交出 `PfDb` 那一面、`close` 是唯一关闭口，**刻意不实现 `PfDatabase`**
+（`rekey` 会让密钥进第二处 `String`，归 M2 的密钥管理）。
+
+为什么必须定一个组合点：SQLite 的写锁在进程内是独占的。五条命令若各自
+`open` 一次，第二次会以 `database is locked` 失败 —— 排查方向会被引向
+「并发写」，而真正的原因是「同一个库开了两次」。`init --seed` 就是这条约束的
+直接体现：seed 用的是**已打开的那个句柄**，不是再开一次（见 `init.dart`）。
+
+### 4.2 五条命令与各自的落点
+
+| 命令 | 它做什么 | 关键约束 |
+|---|---|---|
+| `pf init <db> [--seed]` | `Sqlite3Engine.openEncrypted` → `MigrationRunner.run` → （`--seed`）样本 | 幂等：已建好则不动。`--seed` 与 `init` **同一句柄** |
+| `pf seed <db>` | 既有仓储层灌样本，走 `applySeed(db)`（与 `--seed` 共用一份实现） | 幂等判据与 `--seed` **一致**，否则两条入口会给出两个结论 |
+| `pf export <db> [--out f.pfb]` | 读库 → `PfbPayloadEncoder.encode` → `PfbExportAssembler.assemble` | 默认先在内存里**读回自校验**，通过之后才落盘 |
+| `pf import <f.pfb> --db <db>` | `PfbImportReader.read` → `ImportApplier.apply` → `ImportIntegrityCheck.assertAll` | **先读 .pfb，再开库**（读不到的文件是最可能的用户错误） |
+| `pf dump <db> [--out f]` | 与 `pf info --records` 的 records 段**共用同一条读取路径**（`PfPayloadExtractor.readStages`） | 与 `--json` **互斥**；输出是给 diff 用的规范文本 |
+
+`dump` 为什么不含路径 / 时间戳 / 设备标识 / `app_meta` / 派生列
+（`cached_balance_minor` 之类）：它是**往返契约**的观测面。带上任何一项，
+「重建库之后 deviceId 变了」都会让它变红 —— 而那恰恰是正确行为。
+
+### 4.3 密码与密钥（两套，都不是同一个东西）
+
+沿用 §1.5 的分界，再加**数据库密钥**这一半 —— 五条读写命令需要的是**两个**秘密：
+
+| 秘密 | 是什么 | 命令行 | 环境变量 |
+|---|---|---|---|
+| 数据库密钥 | 32 字节原始密钥（打开本地加密库） | `--database-key-file` / `-k` | `PF_DATABASE_KEY` |
+| `.pfb` 口令 | Argon2id 口令（加密/解密导出容器） | `--password-file` / `-p` | `PF_PASSWORD` |
+
+两者都**刻意不提供明文命令行参数**（会留在 shell 历史与进程列表里）。
+密钥文件接受 64 个十六进制字符，末尾一个换行与 UTF-8 BOM 会被忽略；
+失败文案**不回显密钥内容**（由 `database_key_test.dart` 钉死）。
+
+### 4.4 中间产物的落点
+
+一律落 `build/`：`**/*.pfb` 与 `**/*.db` 都在 `tracked_paths` 的 deny 名单里，
+所以它们**落不了盘进版本库**（这也是 §2.3 里样本要以 hex 存在 fixture 中的原因）。
+本节的自测产物用 `build/probe/`。
+
+### 4.5 本机自测（怎么跑、看到什么才算通过）
+
+```bash
+SQLCIPHER="$(dart run tools/pf_cli/bin/fetch_engine.dart --artifact sqlcipher --print-path)"
+KEY=build/probe/k.txt ; PW=build/probe/pw.txt ; B=build/probe
+printf '%s' '404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f' > "$KEY"
+printf '%s' 'correct horse' > "$PW"
+
+# ① 建库 + 灌样本
+dart run tools/pf_cli/bin/pf.dart init "$B/round.db" --seed \
+     -k "$KEY" --engine-lib "$SQLCIPHER"
+#   通过 = exit 0，status=initialized，counts 里 ledger=1 account=2 category=2 txn=3
+
+# ①b 记下「导入之前」的库快照（往返的左侧）
+dart run tools/pf_cli/bin/pf.dart dump "$B/round.db" -o "$B/before.txt" \
+     -k "$KEY" --engine-lib "$SQLCIPHER"
+#   通过 = exit 0，stdout 上什么都没有（文本落文件），$B/before.txt 非空
+
+# ② 导出 → ③ 校验
+dart run tools/pf_cli/bin/pf.dart export "$B/round.db" -o "$B/round.pfb" \
+     -k "$KEY" -p "$PW" --engine-lib "$SQLCIPHER"
+#   通过 = exit 0，status=exported，recordCount=8，verifiedByReadBack=true
+dart run tools/pf_cli/bin/pf.dart verify "$B/round.pfb" -p "$PW"
+#   通过 = exit 0，status=ok
+
+# ④ 删库重建（deviceId 会变、seeded=false —— 这是对的）
+rm -f "$B/round.db" "$B/round.db-wal" "$B/round.db-shm"
+dart run tools/pf_cli/bin/pf.dart init "$B/round.db" -k "$KEY" --engine-lib "$SQLCIPHER"
+
+# ⑤ 导入 → ⑥ 前后两次 dump 逐字节相同
+dart run tools/pf_cli/bin/pf.dart import "$B/round.pfb" --db "$B/round.db" \
+     -p "$PW" -k "$KEY" --engine-lib "$SQLCIPHER"
+#   通过 = exit 0，status=imported，inserted=8，且 backupPath 指向的那个文件真的存在
+dart run tools/pf_cli/bin/pf.dart dump "$B/round.db" -o "$B/after.txt" \
+     -k "$KEY" --engine-lib "$SQLCIPHER"
+diff "$B/before.txt" "$B/after.txt"     # 空 ⇒ 往返无损
+```
+
+同一条链在 `tools/pf_cli/test/roundtrip_test.dart` 里有可执行版本（走真磁盘、
+真 SQLCipher、真环境变量，临时目录跑完即删）。**它是这条链唯一的回归保护**：
+在它出现之前，本仓没有任何一条测试真的执行过 §2.3 的 DDL。
+
+| 看到什么 | 说明 |
+|---|---|
+| `diff` 非空，且差在 `device_id` | 说明 `dump` 把设备标识带进来了 —— 那是漂移，不是数据不同 |
+| `diff` 非空，且差在 `cached_balance_minor` | 派生态参与了往返契约。余额应由交易重放得出，不该参与逐字节比对 |
+| `import` 返回 **1** | 冲突（`strategy=abort` 的**正确**结论）。要它自行收敛就用 `--strategy converge`，那时返回 0 |
+| 第二次 `import` 同一个文件返回 0 且 `inserted=0` | **正确行为**：幂等短路（`already-imported`），库不变 |
+| `dump` 在失败时 stdout 非空 | 契约被改坏了：那份文本要拿去逐字节 diff，混进诊断行就等于「数据不一致」和「命令没跑起来」分不开 |
+| `import` 缺 `--database-key-file` 时先报 `.pfb` 读不到 | **正确行为**：先读文件，再开库（见 §4.2） |
+
+### 4.6 已裁决：收回 `trusted_schema = OFF`（方案 B）
+
+**状态：已裁决、已实施、已实跑验证。** 这是本笔实跑时暴露的**先前就存在**的冲突
+（`securityRequired`/`postOpen` 是 M0 增补，schema v1 的 DDL 是 §2.3），
+此前没有任何测试执行过真 DDL，所以两侧一致地「文本正确」。
+
+**症状**：`pf init` 在定版引擎上完全不可用 ——
+`PFD_E_MIGRATION：schema 迁移失败：v0 → v1`，真实 cause 是
+`SqliteException(1): unsafe use of json_valid(), SQL logic error`。
+五条读写命令全部因此不可达（它们都要先有一个建好的库）。
+
+实测（`build/probe/trusted_schema_ab.py`，直接 ctypes 调 `sqlite3_exec`）：
+
+| 引擎 | SQLite | `trusted_schema=OFF` 下建带 `json_valid` CHECK 的表 |
+|---|---|---|
+| 定版 SQLCipher 4.5.2（`e_sqlcipher`） | **3.39.2** | **失败**：`unsafe use of json_valid()` |
+| 定版纯 SQLite（`e_sqlite3`，反例件） | **3.49.1** | 通过 |
+
+即：**同一个 SQL 在两份定版件上一个能建、一个不能** —— 差别只在 SQLite 版本
+（上游后来把 JSON 函数标记为 `SQLITE_INNOCUOUS` 了；`json1.html` 现在写着
+「All of the functions listed below have the SQLITE_INNOCUOUS … flags」）。
+这不是我们的 SQL 写错，是**引擎太旧**。又因为 **INSERT 同样被拒**，
+「建表时临时 `ON`、建完再 `OFF`」不是出路。
+
+影响面已经量过（`build/probe/schema_blast_radius.py`：把 §2.3 的 43 条 DDL
+逐条执行）：`OFF` 下 3.39.2 有 **14 条**被拒，其中**只有 2 条是根因**
+（`CREATE TABLE txn`、`CREATE TABLE theme_profile`），其余 12 条是索引/触发器
+跟着「表没建成」的级联。**去掉那两处 `json_valid` 之后 0/43 被拒** ——
+包括 FTS5 虚表与三个 FTS 触发器。也就是说这是两个一行的改动，不是满盘的手术。
+
+#### 裁决：B —— 收回 `PRAGMA trusted_schema = OFF`
+
+三个候选是：A 升引擎到 SQLCipher ≥ 4.7（SQLite 3.49.1）；B 去掉自加的
+`trusted_schema = OFF`；C 去掉 §2.3 的两处 `json_valid` CHECK。**选 B**，三条理由：
+
+1. **B 在任何 SQLite 版本上都成立。** A 只是让**当前**这个引擎能跑，而 M2
+   移动端随库链接的引擎版本**未知**，同类风险会再来一次 —— A 是把地雷挪个位置。
+2. **这条加固今天防的是空集。** 它拦的是「schema 里的视图/触发器调用应用自定义
+   函数」，而本应用**从不注册自定义 SQL 函数**（全仓 `createFunction` 调用数为 0），
+   这条路径根本不存在。
+3. **`CHECK (json_valid(…))` 离 bug 更近。** 它防的是「应用自己往列里写进坏 JSON」，
+   是一条真实的完整性检查；两条里该留下的是它。
+
+#### 改了什么（三处必须同步，否则向量必红）
+
+| 文件 | 改动 |
+|---|---|
+| `packages/pf_data/lib/src/database.dart` | `securityRequired` 与 `postOpen` 各删一行；`PfSqlitePragma` 类文档新增「已收回的安全收紧」整节 |
+| `tools/golden_vectors_gen/db_open.py` | `post_open_statements()` 删一行 + 注明收回理由（向量**独立转录侧**） |
+| `test_vectors/v1/db_open.json` | 用 `python tools/golden_vectors_gen/db_open.py --write` **重新生成**（不手改） |
+
+改后该向量文件的 diff 恰好是两处 `postOpenStatements` 各少一行；另 5 条用例不动。
+`db.open.plan.*` 的期望值由「规格 §3.4 原文人工转录」与 Dart 侧
+`PfSqlitePragma` 独立产出、在向量比对处会合 —— 所以**只改 Dart 不改 Python 会红**，
+这正是这次同步值得列成表格的原因。
+
+#### 为什么以前没发现，以及拿回它时必须做什么
+
+`securityRequired`/`postOpen` 与 §2.3 的 DDL 两侧**都只有文本断言**，本仓没有任何
+测试真的执行过那份 DDL —— 直到 `pf init` 真的存在。`roundtrip_test.dart`
+是那份 DDL **唯一的真实执行者**，也是这个冲突唯一的暴露面。
+
+所以「拿回」不是把两行粘回去就完事。触发条件与三步动作写在
+`database.dart` 的 `PfSqlitePragma` 类文档里（代码旁边才是改动者真正会看的地方）：
+
+- **条件**：所有目标平台（含 M2 移动端）随库链接的 SQLCipher 都绑定
+  SQLite ≥ 标了 `SQLITE_INNOCUOUS` 的那个版本。
+- **第 3 步是判据**：加回两条 PRAGMA → 同步 `db_open.py` 并重新生成向量 →
+  **重跑 `roundtrip_test.dart`**（需先 `melos run engine:fetch`）。
+  DDL 真实执行通过，才算拿回的时机到了。
+
+### 4.7 实跑记录（2026-09-24，本机 Windows）
+
+裁决 B 落地**之后**重跑的完整往返（`build/probe/accept_roundtrip.sh`，
+就是 §4.5 那段脚本的可执行版；产物在 `build/probe/`，不入库）。
+每一步都单独核过退出码与报告字段 —— **「diff 为空」单独不能算通过**，
+因为两个空文件 diff 也是空的：
+
+| 步 | 命令 | 实际结果 |
+|---|---|---|
+| ① | `init round.db --seed` | exit 0，`status=initialized`，`appliedSteps=1`，`seeded=true`，`counts` ledger=1 / account=2 / category=2 / txn=3（tag/theme/budget/attachment 均 0） |
+| ①b | `dump round.db -o before.txt` | exit 0，**stdout 为空**，`before.txt` 4584 字节 |
+| ② | `export round.db -o round.pfb` | exit 0，`recordCount=8`，`verifiedByReadBack=true`，`round.pfb` 1316 字节 |
+| ③ | `verify round.pfb` | exit 0，`status=ok`，`intact=true`，`kdf=m=64MiB t=3 p=1`，`observedRecordCount=8` |
+| ④ | 删库 + `init`（不带 `--seed`） | exit 0，`seeded=false`，`deviceId` 与 ① **不同**（两个库本来就不同） |
+| ⑤ | `import round.pfb --db round.db` | exit 0，`inserted=8`，`updated=0`，`removed=0`，`conflicts=0`，`backupPath` 指向的文件确实存在 |
+| ⑥ | `dump round.db -o after.txt` + `diff` | exit 0，**diff 为空**；两侧同为 4584 字节，sha256 同为 `a2d663d0…` |
+| ⑦ | 再 `import` 同一个 `.pfb` | exit 0，`status=already-imported`，`inserted=0` |
+
+逐表条数与每表的 `stage.<阶段>.sha256` 见 `before.txt`
+（ledger=1 / account=2 / category=2 / txn=3，其余为 0；
+空表的摘要是空串的 SHA-256 `e3b0c442…`）。
+
+**一个读法上的坑**：`before.txt` 的 sha256 **每次实跑都不同** ——
+样本里的主键是 ULID，建库那一刻才生成。所以
+`stage.*.sha256` 这些行**不是**跨运行稳定的常量；
+这条链的不变式只有一条：**同一次运行里 before 与 after 逐字节相等**。
+把本次的摘要当成可复现的期望值搬进测试，会得到一条随机红的用例。
+
+同一条链在 `tools/pf_cli/test/roundtrip_test.dart` 里有可执行版本
+（4 条：端到端往返 / 幂等短路 / `dump` 失败路径 / 明文头传递回归），
+跑它需要定版引擎：`melos run engine:fetch` 之后直接 `dart test`。
+
+### 4.8 已知残留
+
+**① 定版引擎上 `cipher_plaintext_header_size` 是惰性的（M1 无法验证 iOS 变体）**
+
+§3.4 的 iOS 特例要求 `PRAGMA cipher_plaintext_header_size = 32` 在 key **之前**声明，
+使库文件前 32 字节保持明文（NSFileProtection / 文件协调要读文件头）。
+在本定版引擎（SQLCipher 4.5.2 community / SQLite 3.39.2）上实测
+（`build/probe/plaintext_header_order.py`，四组对照）：
+
+| 组 | 写法 | 结果 |
+|---|---|---|
+| A | pragma 在 key **之前**（= §3.4 的顺序，我们发布的做法） | 加密**生效**，但**明文头不存在** |
+| D | 完全不声明 | 与 A **没有可区分的差别** |
+| B | pragma 在 key **之后** | 明文头有了，但**库根本没加密** |
+| C | `cipher_default_plaintext_header_size` | 同 B，且该 pragma 是**进程级**的（会污染同进程后续连接） |
+
+A 组里 pragma 被 `rc=0` 静默收下、然后什么都没发生 ——
+用 `pf init --plaintext-header-bytes 32` 建的库，前 16 字节不是
+`SQLite format 3\0`，事后**不带**该选项照样能打开，与按 0 建的文件字节级不可区分。
+
+- **影响**：M1 无法验证 §3.4 的 iOS 头策略；`db.open.plan.ios-plaintext-header`
+  向量锁的是**脚本文本**（这仍然是对的），不是效果。`--plaintext-header-bytes`
+  在当前引擎上只影响报告字段，不影响落盘布局。
+  也正因为如此，`roundtrip_test.dart` **不能**用「32 建的库打不开」去锁传递
+  （那样测的是引擎的当前实现）—— 那条缝改由两处 `required` 参数在编译期兜住。
+- **处置（归 M2，与 iOS 一起做）**：在 iOS 的 SQLCipher pod 上重跑同一条对照；
+  若那里也惰性，§3.4 的 iOS 特例就失去了它的动机，要回去找真正的做法。
+- **顺带得到的正面结论**：B/C 两组说明这条 pragma 排在 key **之后**会写出
+  **明文库** —— §3.4 把它排在 key 之前的顺序要求不是形式主义。
+
+**② `trusted_schema = OFF` 已收回** —— 见 §4.6，附恢复条件。
+选择方案的取舍记录、以及「为什么这个冲突能潜伏到 `pf init` 真的存在」（两侧都只有文本断言）
+也都在那一节。
+
+**③ `#1b` 未开工** —— M1 收口的其余步骤，与本笔无关。
 

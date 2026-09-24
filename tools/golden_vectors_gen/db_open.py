@@ -46,14 +46,22 @@ def setup_statements(dek_hex: str, plaintext_header_bytes: int) -> list[str]:
 
 
 def post_open_statements() -> list[str]:
-    """§3.4 ⑦（+ M0 增补 trusted_schema=OFF），人工转录。"""
+    """§3.4 ⑦，人工转录。
+
+    这里**故意没有** `PRAGMA trusted_schema = OFF`：M0 往 `securityRequired` /
+    `postOpen` 里加过这条自加固，#5b 第二笔把它收回 —— 它在定版 SQLCipher
+    4.5.2（SQLite 3.39.2）下会让 schema 里的 `CHECK (json_valid(…))`
+    建表即失败（`unsafe use of json_valid()`），而 `pf init` 因此完全不可用。
+    决定全文（为何收回 / 何条件拿回 / 拿回时必须重跑 roundtrip_test）写在
+    `packages/pf_data/lib/src/database.dart` 的 `PfSqlitePragma` 类文档里；
+    本文件与 `test_vectors/v1/db_open.json` 是同一份改动的向量侧，改一处必改三处。
+    """
     return [
         "PRAGMA journal_mode = WAL",
         "PRAGMA synchronous = NORMAL",
         "PRAGMA busy_timeout = 5000",
         "PRAGMA temp_store = MEMORY",
         "PRAGMA secure_delete = ON",
-        "PRAGMA trusted_schema = OFF",
     ]
 
 
